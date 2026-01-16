@@ -27,7 +27,7 @@ static const int FRAME_SIZE_DEFAULT = 5; // FRAMESIZE_QVGA (enum value)
 
 // External LED PWM (for your adjustable illumination)
 // Choose from bottom GPIO: G5/G6/G7/G8/G38/G39
-static const int LED_PWM_PIN = 5;          // GPIO5 (bottom pin)
+static const int LED_PWM_PIN = 2;          // GPIO2 (grove pin)
 static const uint32_t LED_PWM_FREQ_HZ = 5000; // adjust if banding occurs
 static const uint8_t LED_PWM_RES_BITS = 8; // 0..255
 static const uint8_t LED_PWM_DEFAULT = 120;
