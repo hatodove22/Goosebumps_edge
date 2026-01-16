@@ -5,12 +5,12 @@
 // ===============================
 
 // Wi-Fi credentials
-static const char* WIFI_SSID = "YOUR_SSID";
-static const char* WIFI_PASS = "YOUR_PASSWORD";
+static const char* WIFI_SSID = "doves_persosal_AP";
+static const char* WIFI_PASS = "nicola22";
 
 // Collector PC (FastAPI) endpoint
 // Example: "192.168.1.10"
-static const char* COLLECTOR_HOST = "192.168.1.10";
+static const char* COLLECTOR_HOST = "192.168.137.1";
 static const uint16_t COLLECTOR_PORT = 8000;
 static const char* COLLECTOR_PATH = "/upload";
 
