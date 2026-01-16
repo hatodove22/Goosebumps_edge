@@ -1,6 +1,22 @@
 #pragma once
 
 // ===============================
+// Camera variant selection
+// ===============================
+//
+// AtomS3R-CAM (non-M12) uses GC0308 (0.3MP) and does NOT output JPEG natively.
+// We capture RGB565 and encode to JPEG in software (lower FPS, higher CPU).
+//
+// AtomS3R Cam M12 kit uses OV3660 (3MP) and can output JPEG directly.
+//
+// Set CAMERA_VARIANT to match your hardware.
+//
+//   0 = AtomS3R-CAM (GC0308, non-M12)
+//   1 = AtomS3R Cam M12 kit (OV3660, M12)
+//
+static const int CAMERA_VARIANT = 0;
+
+// ===============================
 // User configuration (EDIT THIS!)
 // ===============================
 

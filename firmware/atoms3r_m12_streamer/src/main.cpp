@@ -3,6 +3,7 @@
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
 #include "esp_camera.h"
+#include "img_converters.h"   // fmt2jpg
 #include <Wire.h>
 
 // IMU (BMI270)
@@ -30,6 +31,10 @@ static float g_last_gx = NAN, g_last_gy = NAN, g_last_gz = NAN;
 static float g_last_gnorm = NAN;
 
 // ---------- Helpers ----------
+static bool is_m12_variant() {
+  return (CAMERA_VARIANT == 1);
+}
+
 static void led_init() {
   ledcSetup(LEDC_CH, LED_PWM_FREQ_HZ, LED_PWM_RES_BITS);
   ledcAttachPin(LED_PWM_PIN, LEDC_CH);
@@ -106,6 +111,12 @@ static void udp_init() {
 }
 
 static camera_config_t make_camera_config() {
+  // AtomS3R-CAM (GC0308) requires GPIO18 LOW before camera init (power enable).
+  // M5Stack docs: "Before camera initialization, set GPIO18 low to enable power".
+  pinMode(18, OUTPUT);
+  digitalWrite(18, LOW);
+  delay(5);
+
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_1;     // camera uses different channel internally
   config.ledc_timer   = LEDC_TIMER_1;
@@ -128,7 +139,14 @@ static camera_config_t make_camera_config() {
   config.pin_reset    = CAM_PIN_RESET;
 
   config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
+
+  // M12(OV3660): native JPEG
+  // non-M12(GC0308): no native JPEG -> capture RGB565, then encode to JPEG in software
+  if (is_m12_variant()) {
+    config.pixel_format = PIXFORMAT_JPEG;
+  } else {
+    config.pixel_format = PIXFORMAT_RGB565;
+  }
 
   config.frame_size   = (framesize_t)g_frame_size;
   config.jpeg_quality = g_jpeg_quality;  // 0..63 (lower=better, larger)
@@ -156,7 +174,11 @@ static bool camera_init() {
   sensor_t* s = esp_camera_sensor_get();
   // basic tuning (optional)
   s->set_framesize(s, (framesize_t)g_frame_size);
-  s->set_quality(s, g_jpeg_quality);
+
+  if (is_m12_variant()) {
+    // JPEG quality is meaningful only when camera outputs JPEG
+    s->set_quality(s, g_jpeg_quality);
+  }
 
   Serial.println("[CAM] init OK");
   return true;
@@ -164,6 +186,34 @@ static bool camera_init() {
 
 static void camera_deinit() {
   esp_camera_deinit();
+}
+
+// Convert non-JPEG frame buffer to JPEG (software encoding)
+// Returns true on success; caller must free(*out_buf) when true.
+static bool fb_to_jpeg(const camera_fb_t* fb, uint8_t jpeg_quality, uint8_t** out_buf, size_t* out_len) {
+  *out_buf = nullptr;
+  *out_len = 0;
+
+  if (!fb || !fb->buf || fb->len == 0) return false;
+
+  if (fb->format == PIXFORMAT_JPEG) {
+    // Should not happen here in non-M12 path, but keep safe.
+    *out_buf = (uint8_t*)fb->buf;
+    *out_len = fb->len;
+    return true;
+  }
+
+  // Encode RGB565 -> JPEG
+  // Note: fmt2jpg allocates output buffer; free() it after upload.
+  bool ok = fmt2jpg(
+    fb->buf, fb->len,
+    fb->width, fb->height,
+    fb->format,
+    jpeg_quality,
+    out_buf,
+    out_len
+  );
+  return ok;
 }
 
 // Build and send multipart/form-data request
@@ -174,6 +224,24 @@ static bool http_upload_frame(camera_fb_t* fb) {
   if (!client.connect(COLLECTOR_HOST, COLLECTOR_PORT)) {
     Serial.println("[HTTP] connect failed");
     return false;
+  }
+
+  // Ensure we always send JPEG to the Collector.
+  uint8_t* jpg_buf = nullptr;
+  size_t jpg_len = 0;
+  bool need_free = false;
+
+  if (fb->format == PIXFORMAT_JPEG) {
+    jpg_buf = fb->buf;
+    jpg_len = fb->len;
+    need_free = false;
+  } else {
+    // For GC0308 (RGB565), encode in software.
+    if (!fb_to_jpeg(fb, g_jpeg_quality, &jpg_buf, &jpg_len)) {
+      Serial.println("[JPEG] encode failed");
+      return false;
+    }
+    need_free = true;
   }
 
   String boundary = "----gbBoundary";
@@ -220,7 +288,7 @@ static bool http_upload_frame(camera_fb_t* fb) {
   tail.reserve(64);
   tail += "\r\n--" + boundary + "--\r\n";
 
-  const uint32_t content_length = head.length() + fb->len + tail.length();
+  const uint32_t content_length = head.length() + jpg_len + tail.length();
 
   // HTTP header
   client.print(String("POST ") + COLLECTOR_PATH + " HTTP/1.1\r\n");
@@ -232,7 +300,7 @@ static bool http_upload_frame(camera_fb_t* fb) {
 
   // body
   client.print(head);
-  client.write(fb->buf, fb->len);
+  client.write(jpg_buf, jpg_len);
   client.print(tail);
 
   // Read response (best effort)
@@ -247,6 +315,10 @@ static bool http_upload_frame(camera_fb_t* fb) {
     break;
   }
   client.stop();
+
+  if (need_free && jpg_buf) {
+    free(jpg_buf);
+  }
   return true;
 }
 
@@ -325,8 +397,10 @@ static void handle_udp_cmd() {
       if (q < 2) q = 2;
       if (q > 63) q = 63;
       g_jpeg_quality = (uint8_t)q;
-      sensor_t* s = esp_camera_sensor_get();
-      if (s) s->set_quality(s, g_jpeg_quality);
+      if (is_m12_variant()) {
+        sensor_t* s = esp_camera_sensor_get();
+        if (s) s->set_quality(s, g_jpeg_quality);
+      }
       out["jpeg_quality"] = q;
     }
 
@@ -381,42 +455,73 @@ static void stream_loop_once() {
 
 // ---------- Arduino entry ----------
 void setup() {
+  // ESP32-S3 USB CDC初期化には時間がかかる場合があるため、十分な待機時間を確保
   Serial.begin(115200);
-  delay(200);
+  delay(1000);  // USB CDC初期化待機時間を延長
 
   Serial.println("\n== AtomS3R-M12 Streamer ==");
+  Serial.println("[DEBUG] Serial initialized");
+  Serial.flush();
+  
+  Serial.println("[DEBUG] Starting LED init...");
   led_init();
+  Serial.println("[DEBUG] LED init OK");
+  Serial.flush();
 
+  Serial.println("[DEBUG] Starting WiFi connect...");
   if (!wifi_connect()) {
+    Serial.println("[DEBUG] WiFi connect failed, retrying...");
     // keep retrying
     while (!wifi_connect()) {
       delay(2000);
     }
   }
+  Serial.println("[DEBUG] WiFi connected");
+  Serial.flush();
 
+  Serial.println("[DEBUG] Starting UDP init...");
   udp_init();
+  Serial.println("[DEBUG] UDP init OK");
+  Serial.flush();
 
   // IMU is optional; the system can still run without it.
+  Serial.println("[DEBUG] Starting IMU init...");
   imu_init();
+  Serial.println("[DEBUG] IMU init completed");
+  Serial.flush();
 
+  Serial.println("[DEBUG] Starting camera init...");
   if (!camera_init()) {
-    Serial.println("[CAM] init failed. rebooting in 2s...");
-    delay(2000);
-    ESP.restart();
+    Serial.println("[CAM] init failed. HALT for debug (no reboot).");
+    while (true) { delay(1000); }
   }
+  
+  Serial.println("[DEBUG] Camera init OK");
+  Serial.flush();
 
   // start streaming by default (optional)
   g_streaming = true;
   Serial.println("[SYS] streaming=ON (default). Use UDP cmd stop_stream to stop.");
+  Serial.println("[DEBUG] Setup completed successfully!");
+  Serial.flush();
 }
 
 void loop() {
+  // 最初のループでデバッグメッセージを出力（一度だけ）
+  static bool first_loop = true;
+  if (first_loop) {
+    Serial.println("[DEBUG] Entering main loop");
+    Serial.flush();
+    first_loop = false;
+  }
+  
   handle_udp_cmd();
   stream_loop_once();
 
   // keep Wi-Fi alive
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[WiFi] disconnected, reconnecting...");
+    Serial.flush();
     g_streaming = false;
     WiFi.disconnect(true);
     delay(300);
