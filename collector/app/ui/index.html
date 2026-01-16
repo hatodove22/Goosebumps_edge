@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Goosebumps Collector UI</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    .row { display: flex; gap: 16px; }
+    .panel { border: 1px solid #ddd; padding: 12px; border-radius: 8px; }
+    #preview { width: 360px; height: auto; border: 1px solid #ccc; }
+    .k { font-weight: 600; }
+    .small { font-size: 12px; color: #555; }
+    button { padding: 6px 10px; }
+    input[type="text"] { width: 220px; }
+    .sig { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: #aaa; }
+    .sig.good { background: #2ecc71; }
+    .sig.warn { background: #f1c40f; }
+    .sig.bad { background: #e74c3c; }
+  </style>
+</head>
+<body>
+  <h2>Goosebumps Collector UI</h2>
+  <div class="small">
+    Hotkeys: <b>G</b>=goose on/off, <b>S</b>=stim on/off, <b>M</b>=motion confound, <b>L</b>=light confound, <b>N</b>=note focus
+  </div>
+
+  <div class="row">
+    <div class="panel">
+      <div id="previewWrap" style="position:relative; display:inline-block;">
+  <img id="preview" src="/latest.jpg" alt="preview">
+  <div id="roiBox" style="position:absolute; border:2px solid rgba(0,0,0,0.55); pointer-events:none;"></div>
+</div>
+      <div class="small">Preview updates every 200ms (simple polling).</div>
+      <div id="status" class="small"></div>
+      <div class="small" style="margin-top:6px;">
+        <span id="motionSig" class="sig"></span><span id="motionText">motion: -</span>
+      </div>
+      <div id="imuStatus" class="small"></div>
+      <div id="qualityStatus" class="small"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Session</h3>
+      <div>
+        <div><span class="k">subject_id</span> <input id="subject" type="text" value="001"></div>
+        <div><span class="k">session_id</span> <input id="session" type="text" placeholder="auto if empty"></div>
+        <div><span class="k">operator</span> <input id="operator" type="text" value=""></div>
+        <div><span class="k">body_site</span> <input id="body_site" type="text" value="forearm"></div>
+        <div><span class="k">notes</span> <input id="notes" type="text" value=""></div>
+      </div>
+      <div style="margin-top:8px;">
+        <button onclick="startSession()">Start</button>
+        <button onclick="stopSession()">Stop</button>
+      </div>
+
+      <h3 style="margin-top:14px;">Label / Events</h3>
+      <div>
+        <button onclick="toggleEvent('goose')">Goose ON/OFF (G)</button>
+        <button onclick="toggleEvent('stim')">Stim ON/OFF (S)</button>
+      </div>
+      <div style="margin-top:8px;">
+        <button onclick="toggleEvent('motion')">Confound Motion (M)</button>
+        <button onclick="toggleEvent('light')">Confound Light (L)</button>
+      </div>
+      <div style="margin-top:8px;">
+        <span class="k">Note</span>
+        <input id="note" type="text" placeholder="free note">
+        <button onclick="sendNote()">Save Note</button>
+      </div>
+
+      <h3 style="margin-top:14px;">Lighting</h3>
+      <div>
+        <input id="pwm" type="range" min="0" max="255" value="120" oninput="pwmLabel.innerText=this.value">
+        <span id="pwmLabel">120</span>
+        <button onclick="setLed()">Send to device</button>
+        <label style="margin-left:8px;"><input id="autoLuma" type="checkbox" onchange="setAutoLuma()"> Auto Luma</label>
+
+      </div>
+
+      <h3 style="margin-top:14px;">Device</h3>
+      <div>
+        <button onclick="devicePing()">Ping</button>
+        <button onclick="deviceStartStream()">Start Stream</button>
+        <button onclick="deviceStopStream()">Stop Stream</button>
+      </div>
+      <div style="margin-top:8px;">
+        <div><span class="k">target_fps</span> <input id="target_fps" type="number" min="1" max="30" value="12" style="width:80px"></div>
+        <div><span class="k">jpeg_quality</span> <input id="jpeg_quality" type="number" min="2" max="63" value="20" style="width:80px"></div>
+        <button onclick="applyParams()">Apply Params</button>
+      </div>
+      <div id="deviceResp" class="small"></div>
+
+      <h3 style="margin-top:14px;">Pilot FFT</h3>
+      <div>
+        <button onclick="calibrate()">Calibrate (10s)</button>
+        <button onclick="makeReport()">Generate Report</button>
+      </div>
+      <div id="baseline" class="small"></div>
+<div id="imuQuality" class="small"></div>
+    </div>
+  </div>
+
+  <script>
+    let gooseOn=false, stimOn=false, motionOn=false, lightOn=false;
+    let reactionDelaySec = 1.0; // can expose later
+
+    async function apiGet(path){
+      const r = await fetch(path);
+      return await r.json();
+    }
+    async function apiPost(path, obj){
+      const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj)});
+      return await r.json();
+    }
+
+    async function refresh(){
+      try {
+        // preview
+        const img = document.getElementById('preview');
+        img.src = '/latest.jpg?ts=' + Date.now();
+
+        // session state
+        const s = await apiGet('/session');
+        document.getElementById('status').innerText =
+          `active=${s.active} fps=${(s.fps||0).toFixed(1)} device_ip=${s.device_ip||'-'} session=${s.session_id||'-'} gb=${(s.last_gb_index||0).toFixed(5)}`;
+
+        // baseline
+        // IMU / Quality display
+      try {
+        const iq = document.getElementById('imuQuality');
+        const imu = s.last_imu || {};
+        const q = s.last_quality || {};
+        const gnorm = (imu.g_norm!==undefined && imu.g_norm!==null) ? Number(imu.g_norm).toFixed(1) : '-';
+        const gx = (imu.gx!==undefined && imu.gx!==null) ? Number(imu.gx).toFixed(1) : '-';
+        const gy = (imu.gy!==undefined && imu.gy!==null) ? Number(imu.gy).toFixed(1) : '-';
+        const gz = (imu.gz!==undefined && imu.gz!==null) ? Number(imu.gz).toFixed(1) : '-';
+        const ax = (imu.ax!==undefined && imu.ax!==null) ? Number(imu.ax).toFixed(2) : '-';
+        const ay = (imu.ay!==undefined && imu.ay!==null) ? Number(imu.ay).toFixed(2) : '-';
+        const az = (imu.az!==undefined && imu.az!==null) ? Number(imu.az).toFixed(2) : '-';
+        const luma = (q.luma_mean!==undefined && q.luma_mean!==null) ? Number(q.luma_mean).toFixed(1) : '-';
+        const blur = (q.blur_laplacian_var!==undefined && q.blur_laplacian_var!==null) ? Number(q.blur_laplacian_var).toFixed(1) : '-';
+        const sw = (q.sat_white_ratio!==undefined && q.sat_white_ratio!==null) ? Number(q.sat_white_ratio).toFixed(3) : '-';
+        const sb = (q.sat_black_ratio!==undefined && q.sat_black_ratio!==null) ? Number(q.sat_black_ratio).toFixed(3) : '-';
+        const band = (q.banding_score!==undefined && q.banding_score!==null) ? Number(q.banding_score).toFixed(2) : '-';
+        const motion = q.motion_flag ? 'YES' : 'OK';
+        if (iq) iq.innerText = `IMU g_norm=${gnorm} (gx,gy,gz=${gx},${gy},${gz}) acc=${ax},${ay},${az} | Q luma=${luma} blur=${blur} satW=${sw} satB=${sb} band=${band} motion=${motion}`;
+      } catch(e) {}
+
+      if (s.baseline){
+          document.getElementById('baseline').innerText =
+            `baseline mean=${s.baseline.mean.toFixed(4)} std=${s.baseline.std.toFixed(4)} thr=${s.baseline.thr.toFixed(4)} (k=${s.baseline.k})`;
+        } else {
+          document.getElementById('baseline').innerText = 'baseline: (not calibrated)';
+        }
+
+        // pwm
+        const pwm = document.getElementById('pwm');
+        if (s.current_led_pwm !== null && s.current_led_pwm !== undefined){
+          pwm.value = s.current_led_pwm;
+          pwmLabel.innerText = s.current_led_pwm;
+        }
+
+        // IMU
+        const imu = s.last_imu || null;
+        const fmt = (v)=> (v===null || v===undefined || !isFinite(v)) ? '-' : Number(v).toFixed(3);
+        if (imu){
+          document.getElementById('imuStatus').innerText =
+            `imu g_norm=${fmt(imu.g_norm)} gx=${fmt(imu.gx)} gy=${fmt(imu.gy)} gz=${fmt(imu.gz)} ax=${fmt(imu.ax)} ay=${fmt(imu.ay)} az=${fmt(imu.az)}`;
+        } else {
+          document.getElementById('imuStatus').innerText = 'imu: -';
+        }
+
+        // Quality / motion
+        const q = s.last_quality || null;
+        if (q){
+          const motion = (q.motion_flag||0) ? 1 : 0;
+          const sig = document.getElementById('motionSig');
+          sig.className = 'sig ' + (motion ? 'warn' : 'good');
+          document.getElementById('motionText').innerText = 'motion: ' + (motion ? 'YES' : 'OK');
+          document.getElementById('qualityStatus').innerText =
+            `luma_mean=${fmt(q.luma_mean)} blur=${fmt(q.blur_laplacian_var)} satW=${fmt(q.sat_white_ratio)} satB=${fmt(q.sat_black_ratio)} band=${fmt(q.banding_score)}`;
+        } else {
+          document.getElementById('motionSig').className = 'sig';
+          document.getElementById('motionText').innerText = 'motion: -';
+          document.getElementById('qualityStatus').innerText = 'quality: -';
+        }
+      } catch (e) {
+        document.getElementById('status').innerText = 'collector not responding (is the server running?)';
+        document.getElementById('imuStatus').innerText = '';
+        document.getElementById('qualityStatus').innerText = '';
+        document.getElementById('motionSig').className = 'sig bad';
+        document.getElementById('motionText').innerText = 'motion: -';
+      }
+    }
+
+    setInterval(refresh, 800);
+
+    async function startSession(){
+      const subject = document.getElementById('subject').value.trim();
+      const session = document.getElementById('session').value.trim();
+      const operator = document.getElementById('operator').value.trim();
+      const body_site = document.getElementById('body_site').value.trim();
+      const notes = document.getElementById('notes').value.trim();
+      const res = await apiPost('/session/start', {subject_id:subject, session_id:(session||null), operator, body_site, notes});
+      alert(JSON.stringify(res));
+    }
+
+    async function stopSession(){
+      const res = await apiPost('/session/stop', {});
+      alert(JSON.stringify(res));
+    }
+
+    async function postEvent(type, value=1, note=""){
+      // reaction delay compensation for goose events (optional)
+      let pc_ts_ms = null;
+      if (type === 'goose_on' || type === 'goose_off'){
+        pc_ts_ms = Date.now() - Math.floor(reactionDelaySec * 1000);
+      }
+      return await apiPost('/event', {type, value, note, pc_ts_ms});
+    }
+
+    async function toggleEvent(which){
+      if (which === 'goose'){
+        gooseOn = !gooseOn;
+        await postEvent(gooseOn ? 'goose_on' : 'goose_off', 1, '');
+      } else if (which === 'stim'){
+        stimOn = !stimOn;
+        await postEvent(stimOn ? 'stim_on' : 'stim_off', 1, '');
+      } else if (which === 'motion'){
+        motionOn = !motionOn;
+        await postEvent(motionOn ? 'confound_motion_start' : 'confound_motion_stop', 1, '');
+      } else if (which === 'light'){
+        lightOn = !lightOn;
+        await postEvent(lightOn ? 'confound_light_start' : 'confound_light_stop', 1, '');
+      }
+    }
+
+    async function sendNote(){
+      const note = document.getElementById('note').value;
+      document.getElementById('note').value = '';
+      await postEvent('note', 1, note);
+    }
+
+    async function setLed(){
+      const pwm = parseInt(document.getElementById('pwm').value);
+      const res = await deviceCmd({cmd:'set_led', pwm:pwm});
+      alert(JSON.stringify(res));
+    }
+
+    async function deviceCmd(obj){
+      const res = await apiPost('/device/cmd', obj);
+      document.getElementById('deviceResp').innerText = JSON.stringify(res);
+      return res;
+    }
+
+    async function devicePing(){
+      await deviceCmd({cmd:'ping'});
+    }
+
+    async function deviceStartStream(){
+      await deviceCmd({cmd:'start_stream'});
+    }
+
+    async function deviceStopStream(){
+      await deviceCmd({cmd:'stop_stream'});
+    }
+
+    async function applyParams(){
+      const fps = parseInt(document.getElementById('target_fps').value);
+      const q = parseInt(document.getElementById('jpeg_quality').value);
+      await deviceCmd({cmd:'set_param', target_fps: fps, jpeg_quality: q});
+    }
+
+    async function calibrate(){
+      const res = await apiPost('/pilot/calibrate', {window_sec:10.0, k_sigma:3.0});
+      alert(JSON.stringify(res));
+    }
+
+    async function makeReport(){
+      const res = await apiPost('/pilot/report', {});
+      alert(res.ok ? 'report generated' : JSON.stringify(res));
+    }
+
+    document.addEventListener('keydown', (e)=>{
+      if (e.key === 'g' || e.key === 'G'){ toggleEvent('goose'); }
+      if (e.key === 's' || e.key === 'S'){ toggleEvent('stim'); }
+      if (e.key === 'm' || e.key === 'M'){ toggleEvent('motion'); }
+      if (e.key === 'l' || e.key === 'L'){ toggleEvent('light'); }
+      if (e.key === 'n' || e.key === 'N'){ document.getElementById('note').focus(); }
+    });
+  </script>
+</body>
+</html>
