@@ -47,3 +47,10 @@ static const int LED_PWM_PIN = 2;          // GPIO2 (grove pin)
 static const uint32_t LED_PWM_FREQ_HZ = 5000; // adjust if banding occurs
 static const uint8_t LED_PWM_RES_BITS = 8; // 0..255
 static const uint8_t LED_PWM_DEFAULT = 120;
+
+// ===============================
+// Camera self-test (optional)
+// ===============================
+// Enable to capture a few frames at boot and print status to Serial.
+static const bool ENABLE_CAMERA_SELF_TEST = false;
+static const uint8_t CAMERA_SELF_TEST_FRAMES = 3;

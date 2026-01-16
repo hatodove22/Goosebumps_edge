@@ -1,3 +1,8 @@
+// Fix for AtomS3R-CAM (GC0308) + IMU:
+// 1) Initialize CAMERA before IMU/Wire to avoid I2C pin routing conflicts.
+// 2) Force camera SCCB onto I2C port 1 so it does not share I2C0 with Arduino Wire.
+// These changes address frequent ESP_ERR_NOT_FOUND (0x105) probe failures.
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -33,6 +38,32 @@ static float g_last_gnorm = NAN;
 // ---------- Helpers ----------
 static bool is_m12_variant() {
   return (CAMERA_VARIANT == 1);
+}
+
+static void camera_power_enable() {
+  pinMode(18, OUTPUT);
+  digitalWrite(18, LOW);  // enable camera power
+  delay(200);             // allow sensor power to stabilize (more margin)
+}
+
+static void scan_camera_i2c_once() {
+  // Use I2C port 1 for CAM_SDA/CAM_SCL (GPIO12/GPIO9) to avoid Wire (IMU) on I2C0.
+  TwoWire WireCam(1);
+  WireCam.begin(CAM_PIN_SIOD, CAM_PIN_SIOC, 100000);
+  uint8_t found = 0;
+  Serial.printf("[CAM] I2C scan on SDA=%d SCL=%d ...\n", CAM_PIN_SIOD, CAM_PIN_SIOC);
+  for (uint8_t addr = 8; addr < 120; addr++) {
+    WireCam.beginTransmission(addr);
+    uint8_t err = WireCam.endTransmission();
+    if (err == 0) {
+      Serial.printf("[CAM] I2C device found at 0x%02X\n", addr);
+      found++;
+    }
+  }
+  if (found == 0) {
+    Serial.println("[CAM] I2C scan found no devices (check POWER_N, wiring, pins)"); 
+  }
+  WireCam.end();
 }
 
 static void led_init() {
@@ -111,11 +142,8 @@ static void udp_init() {
 }
 
 static camera_config_t make_camera_config() {
-  // AtomS3R-CAM (GC0308) requires GPIO18 LOW before camera init (power enable).
-  // M5Stack docs: "Before camera initialization, set GPIO18 low to enable power".
-  pinMode(18, OUTPUT);
-  digitalWrite(18, LOW);
-  delay(5);
+  // Ensure camera power is enabled (especially for AtomS3R-CAM / GC0308).
+  camera_power_enable();
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_1;     // camera uses different channel internally
@@ -135,10 +163,18 @@ static camera_config_t make_camera_config() {
   config.pin_href     = CAM_PIN_HREF;
   config.pin_sccb_sda = CAM_PIN_SIOD;
   config.pin_sccb_scl = CAM_PIN_SIOC;
-  config.pin_pwdn     = CAM_PIN_PWDN;
+  // IMPORTANT:
+  // AtomS3R-CAM pin map labels GPIO18 as POWER_N (active-low enable).
+  // esp_camera pin_pwdn is active-high PWDN; passing POWER_N here can disable the camera during probe.
+  // Therefore we keep pin_pwdn unused and control POWER_N ourselves.
+  config.pin_pwdn     = -1;
   config.pin_reset    = CAM_PIN_RESET;
 
-  config.xclk_freq_hz = 20000000;
+  // Put camera SCCB (CAM_SDA/CAM_SCL) on I2C port 1 to avoid sharing I2C0 with Arduino Wire (IMU).
+  config.sccb_i2c_port = 1;
+
+  // For AtomS3R-CAM (GC0308), M5Stack docs suggest XCLK up to 20MHz; start at 20MHz.
+  config.xclk_freq_hz = is_m12_variant() ? 20000000 : 20000000;
 
   // M12(OV3660): native JPEG
   // non-M12(GC0308): no native JPEG -> capture RGB565, then encode to JPEG in software
@@ -165,6 +201,13 @@ static bool camera_init() {
   }
 
   camera_config_t cfg = make_camera_config();
+  scan_camera_i2c_once();
+  Serial.printf("[CAM] pins: SDA=%d SCL=%d VSYNC=%d HREF=%d PCLK=%d XCLK=%d D0=%d D1=%d D2=%d D3=%d D4=%d D5=%d D6=%d D7=%d POWER_N=%d\n",
+                CAM_PIN_SIOD, CAM_PIN_SIOC, CAM_PIN_VSYNC, CAM_PIN_HREF, CAM_PIN_PCLK, CAM_PIN_XCLK,
+                CAM_PIN_D0, CAM_PIN_D1, CAM_PIN_D2, CAM_PIN_D3, CAM_PIN_D4, CAM_PIN_D5, CAM_PIN_D6, CAM_PIN_D7,
+                18);
+  Serial.printf("[CAM] cfg: xclk=%d pixel_format=%d framesize=%d jpeg_quality=%d pin_pwdn=%d sccb_port=%d\n",
+                (int)cfg.xclk_freq_hz, (int)cfg.pixel_format, (int)cfg.frame_size, (int)cfg.jpeg_quality, (int)cfg.pin_pwdn, (int)cfg.sccb_i2c_port);
   esp_err_t err = esp_camera_init(&cfg);
   if (err != ESP_OK) {
     Serial.printf("[CAM] init failed: 0x%x\n", (int)err);
@@ -484,17 +527,19 @@ void setup() {
   Serial.println("[DEBUG] UDP init OK");
   Serial.flush();
 
-  // IMU is optional; the system can still run without it.
-  Serial.println("[DEBUG] Starting IMU init...");
-  imu_init();
-  Serial.println("[DEBUG] IMU init completed");
-  Serial.flush();
-
   Serial.println("[DEBUG] Starting camera init...");
   if (!camera_init()) {
     Serial.println("[CAM] init failed. HALT for debug (no reboot).");
     while (true) { delay(1000); }
   }
+
+  // IMU is optional; the system can still run without it.
+  Serial.println("[DEBUG] Starting IMU init...");
+  if (!imu_init()) {
+    Serial.println("[IMU] init failed (continuing without IMU)");
+  }
+  Serial.println("[DEBUG] IMU init completed");
+  Serial.flush();
   
   Serial.println("[DEBUG] Camera init OK");
   Serial.flush();

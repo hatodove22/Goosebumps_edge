@@ -1,4 +1,4 @@
-# AtomS3R-M12 Streamer (PlatformIO)
+﻿# AtomS3R-M12 Streamer (PlatformIO)
 
 Firmware for **M5Stack AtomS3R-M12 (OV3660 M12 camera)**:
 - Captures JPEG frames from the camera
@@ -6,6 +6,17 @@ Firmware for **M5Stack AtomS3R-M12 (OV3660 M12 camera)**:
 - Listens for UDP JSON commands (LED PWM, start/stop streaming, ping, set_param)
 - Reads the on-board **BMI270 IMU** (optional) and attaches `ax,ay,az,gx,gy,gz,g_norm` to each upload
 
+## AtomS3R-CAM (GC0308, non-M12) support
+This firmware also works on **AtomS3R-CAM (GC0308)** (non-M12).
+
+- `CAMERA_VARIANT`: `0` = GC0308 (non-M12), `1` = M12 (OV3660)
+- GC0308 uses **RGB565 -> software JPEG**, so FPS will be lower
+- Required settings for GC0308:
+  - POWER_N (GPIO18) must be driven **LOW** before init
+  - `pin_pwdn = -1`
+  - `xclk_freq_hz = 20000000`
+  - `sccb_i2c_port = 1`
+  - Init order: **Camera -> IMU**
 ## 1) Configure
 Edit `include/user_config.h`:
 - `WIFI_SSID`, `WIFI_PASS`
@@ -46,3 +57,6 @@ When the BMI270 is detected, the firmware appends the following form fields to `
 
 The BMI270 I2C pins on AtomS3R-M12 are `SYS_SDA=GPIO45`, `SYS_SCL=GPIO0` (see M5Stack PinMap).
 - IMU: on AtomS3R-M12, BMI270 is at I2C address `0x68` on `SYS_SDA/SYS_SCL` (GPIO45/GPIO0). If the IMU init fails, streaming continues without IMU fields.
+
+
+

@@ -1,4 +1,4 @@
-# 鳥肌（立毛）検出エッジAIシステム — 手順書（Procedure Manual） v1.4
+﻿# 鳥肌（立毛）検出エッジAIシステム — 手順書（Procedure Manual） v1.4
 
 更新日: 2026-01-16
 
@@ -81,7 +81,37 @@ uv run python ../tools/simulate_device.py --host http://127.0.0.1:8000 --fps 8 -
 - UIのPreviewが更新されること
 - セッション開始中なら dataset/ に保存されること
 
----
+### 2.5 トラブルシューティング（ネットワーク）
+- スマホ/ブラウザで Invalid HTTP request received が出る  
+  - **http:// を明示**する（HTTPSにしない）
+- Windowsモバイルホットスポット利用時の COLLECTOR_HOST  
+  - 例: 192.168.137.1（ホットスポットのホストIP）
+
+参考（コピー用）
+~~~
+http://192.168.137.1:8000/ui/
+COLLECTOR_HOST=192.168.137.1
+~~~
+
+### 2.6 Atom S3R CAM（非M12 / GC0308）実機チェック手順
+- CAMERA_VARIANT=0（非M12/GC0308）
+- 画像は **RGB565 → ソフトJPEG** で送信される  
+  - 初回は **QVGA + 低FPS** 推奨
+- カメラ電源と初期化注意点  
+  - POWER_N(GPIO18) を **LOW** に保持  
+  - pin_pwdn = -1（esp_cameraにGPIO18を触らせない）  
+  - xclk=20MHz 推奨  
+  - sccb_i2c_port=1（IMUのI2C0と競合回避）  
+  - **初期化順: Camera → IMU**
+
+設定メモ（コピー用）
+~~~
+CAMERA_VARIANT=0
+pin_pwdn=-1
+xclk=20MHz
+sccb_i2c_port=1
+init_order=Camera->IMU
+~~~
 
 ## 3. AtomS3R-M12（PlatformIO）セットアップ
 
@@ -230,3 +260,8 @@ python tools/make_labels.py dataset/subject_001/2026-01-15_session_01
 - 追従中のPWMは events.csv に `led_pwm (note=auto_luma)` として記録される。
 - Previewには固定ROI枠が表示される。ROI枠から皮膚が外れないように治具を調整する。
 - 実機テスト項目は `docs/test_plan.md` を参照。
+
+
+
+
+

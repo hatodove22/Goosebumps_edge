@@ -1,4 +1,4 @@
-# goosebumps-edgeai
+﻿# goosebumps-edgeai
 
 Wearable camera + edge AI system for goosebumps (piloerection) detection.
 
@@ -12,6 +12,17 @@ It also includes firmware for **M5Stack AtomS3R-M12 (OV3660)** under `firmware/a
 - Streams JPEG frames to the collector
 - Accepts UDP JSON commands for LED and streaming control
 - (Optional) reads the on-board BMI270 IMU and attaches `ax,ay,az,gx,gy,gz,g_norm` to each frame
+
+## Supported hardware
+- AtomS3R-M12 (OV3660, M12)
+- AtomS3R-CAM (GC0308, non-M12)
+
+## Docs
+- `docs/procedure_manual.md`
+- `docs/implementation_spec.md`
+- `docs/lab_log/`
+- `docs/dataset_schema.md`
+- `docs/open_source_release_guide.md`
 
 ## Quickstart (Collector PC)
 
@@ -56,12 +67,6 @@ uv run python ../tools/simulate_device.py --host http://127.0.0.1:8000 --fps 8 -
 ```
 
 データ保存を確認する場合は、UIで Session Start を押してから実行してください。
-## Documentation
-- `docs/implementation_spec.md`
-- `docs/procedure_manual.md`
-- `docs/dataset_schema.md`
-- `docs/open_source_release_guide.md`
-
 ## License
 TBD (add a LICENSE before open-sourcing).
 
@@ -70,3 +75,10 @@ TBD (add a LICENSE before open-sourcing).
 - Auto Luma (PI control) from Collector UI
 - ROI overlay on preview
 - `docs/test_plan.md` for real-device tests
+
+
+
+
+
+
+
