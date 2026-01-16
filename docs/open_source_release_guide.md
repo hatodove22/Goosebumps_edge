@@ -1,10 +1,10 @@
-# Open Source Release Guide — Goosebumps EdgeAI v1.1
+# Open Source Release Guide — Goosebumps EdgeAI v1.2
 
-更新日: 2026-01-15
+更新日: 2026-01-16
 
 本書は、本プロジェクトをオープンソース化する際に、第三者が **再現可能**かつ **誤用しにくい**形で公開するためのチェックリストと推奨構成をまとめる。
 
-> v1.1では、PlatformIOファーム（IMU/LED制御）とCollectorの実装に合わせて、公開物とREADME要件を具体化した。
+> v1.2では、Collector PCの依存関係管理をuv（pyproject.toml / uv.lock）へ移行したことを反映した。
 
 ---
 
@@ -18,6 +18,8 @@
 ## 2. 最低限含めるべきファイル（必須）
 - `README.md`（Quickstart、要件、実験の前提、注意点）
 - `LICENSE`
+- `collector/pyproject.toml`（Collector PCの依存関係）
+- `collector/uv.lock`（推奨: 依存関係の固定。再現性を上げる）
 - `CITATION.cff`（論文/プレプリントがある場合）
 - `docs/implementation_spec.md`
 - `docs/procedure_manual.md`
@@ -77,7 +79,7 @@ repo/
 ## 6. 公開前チェックリスト
 - [ ] Wi-Fiパスワード等の秘匿情報が含まれていない（user_config.hはexample化）
 - [ ] `config_example.yaml` を同梱し、config.yamlはgitignore推奨
-- [ ] 依存関係（requirements.txt, platformio.ini）が揃っている
+- [ ] 依存関係（collector/pyproject.toml, uv.lock（推奨）, platformio.ini）が揃っている
 - [ ] 手順通りに動く（simulate→保存→pilot report）
 - [ ] ライセンス・引用情報がある
 - [ ] 倫理・データ公開方針が明文化されている（公開するなら）

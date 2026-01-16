@@ -1,11 +1,12 @@
-# 鳥肌（立毛）検出エッジAIシステム — 実装仕様書（Implementation Spec） v1.2
+# 鳥肌（立毛）検出エッジAIシステム — 実装仕様書（Implementation Spec） v1.4
 
-更新日: 2026-01-15
+更新日: 2026-01-16
 
 本書は **M5Stack AtomS3R Cam M12（OV3660）** をウェアラブルカメラとして用い、皮膚表面の鳥肌（立毛）を検出するためのシステムを、**データ取得**・**事前検証（FFTゲート）**・（必要なら）**学習/解析**・**最終組み込み**まで一貫して実装するための仕様を定義する。  
 実装担当者および実験担当者が分業する前提で、**インターフェース、データ仕様、UI要件、ログ要件、検証ゲート、受入条件**を明記する。
 
-> v1.2 では、実装に合わせて以下を追記した。  
+> v1.4 では、Collector PC のセットアップを Windows でも迷わないように整理し、uv（uv sync / uv run）による依存関係管理へ移行した。
+> - `collector/pyproject.toml` を追加し、`uv sync` で環境を再現できるようにした
 > - **PlatformIO想定のAtomファーム**（HTTPアップロード＋UDP制御）仕様を具体化  
 > - **BMI270（IMU）値をフレーム送信に同梱**する仕様とピン/I2C初期化を明文化  
 > - Collector UIに **Ping / Start/Stop Stream / set_param** 等の操作を追加したことを反映  
@@ -195,14 +196,21 @@ dataset/
 ## 6. Collector PC 実装仕様（FastAPI + Web UI）
 
 ### 6.1 起動方法（実装に即した手順）
-```
+
+Collector PC は `collector/pyproject.toml` に依存関係を定義し、**uv** で環境を構築する。
+
+```powershell
 cd collector
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uv sync
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
 UI: `http://localhost:8000/ui/`
+
+補足:
+- `uv sync` により `.venv/` と `uv.lock` が生成される（初回のみ）。
+- `uv run` を使うと、仮想環境のactivate手順（PowerShell / cmd / bash差）を意識せずに起動できる。
+
 
 ### 6.2 config読み込み規約（実装）
 Collectorは以下の順に `config.yaml` を探索し、見つからなければ `config_example.yaml` を利用する。

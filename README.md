@@ -15,31 +15,47 @@ It also includes firmware for **M5Stack AtomS3R-M12 (OV3660)** under `firmware/a
 
 ## Quickstart (Collector PC)
 
-### 1) Install
+Collector PC は **uv**（AstralのPythonパッケージ/プロジェクトマネージャ）で環境を作成します。
+
+### 0) uv をインストール
+
+**Windows (PowerShell)**
+```powershell
+winget install --id=astral-sh.uv -e
+# もしくは（公式インストーラ）
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**macOS / Linux**
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### 1) 依存関係をインストール（.venv を作成）
+```powershell
 cd collector
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
 
-### 2) Run
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+> `uv sync` により、プロジェクト直下に `.venv/` と `uv.lock` が生成されます（初回のみ）。
+
+### 2) 起動（uv run 推奨）
+```powershell
+cd collector
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Open:
-- UI: `http://localhost:8000/ui/`
+Open UI:
+- `http://localhost:8000/ui/`
 
-### 3) Test without device (simulator)
-In another terminal (with the same venv active):
-```bash
-python tools/simulate_device.py --host http://127.0.0.1:8000 --fps 8 --seconds 10
+### 3) 実機なしスモークテスト（擬似デバイス）
+別ターミナルで：
+```powershell
+cd collector
+uv run python ../tools/simulate_device.py --host http://127.0.0.1:8000 --fps 8 --seconds 10
 ```
 
-You should see the preview updating and, if a session is started, data saved under `dataset/`.
-
+データ保存を確認する場合は、UIで Session Start を押してから実行してください。
 ## Documentation
 - `docs/implementation_spec.md`
 - `docs/procedure_manual.md`

@@ -1,11 +1,11 @@
-# 鳥肌（立毛）検出エッジAIシステム — 手順書（Procedure Manual） v1.2
+# 鳥肌（立毛）検出エッジAIシステム — 手順書（Procedure Manual） v1.4
 
-更新日: 2026-01-15
+更新日: 2026-01-16
 
 本書は、初見の実装担当者・実験担当者が **同一の手順で再現性あるデータ取得**と **事前検証（FFTゲート）**を実施できるように、準備から運用、判定、データ引き渡しまでを手順化したものである。  
 本書の前提として、読者は研究目的（鳥肌検出の実現）を共有済みである。
 
-> v1.2 では、PlatformIOファーム、IMU表示、Collector UIのDevice操作（Ping/Start/Stop/Param）に対応した。
+> v1.4 では、Windows（PowerShell）でのセットアップ手順と、uv を使った依存関係管理（uv sync / uv run）に対応した。
 
 関連: `docs/implementation_spec.md`
 
@@ -27,24 +27,57 @@
 
 ## 2. 初回セットアップ（Collector PC）
 
-### 2.1 インストール
-```bash
-cd collector
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+Collector PC（FastAPI UI）は **uv** を使って依存関係と仮想環境（`.venv/`）を管理する。
+
+### 2.0 前提
+- OS: Windows 10/11（PowerShell推奨）または macOS/Linux
+- ネットワーク: AtomとCollector PCが同一LANに接続できる
+- 既定ポート: `8000`（変更する場合は起動コマンドとファーム設定を一致させる）
+
+### 2.1 uv のインストール（Windows推奨手順）
+**Windows (PowerShell)**
+
+```powershell
+# 推奨: WinGet
+winget install --id=astral-sh.uv -e
+
+# 代替: 公式インストーラ（PowerShellスクリプト）
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-### 2.2 起動
+> `uv --version` でインストール確認を行う。
+
+**macOS / Linux（参考）**
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+### 2.2 依存関係インストール（.venv 作成）
+```powershell
+cd collector
+uv sync
+```
+
+- 初回は `collector/.venv/` と `collector/uv.lock` が生成される。
+- Pythonが未インストールの場合でも、uvは必要に応じてPythonを自動的に用意できる（ネットワークが必要）。  
+  手動で明示する場合は `uv python install 3.11` などを利用する。
+
+### 2.3 起動（uv run 推奨）
+```powershell
+cd collector
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
 UI: `http://localhost:8000/ui/`
 
-### 2.3 実機なしスモークテスト（推奨）
-```bash
-python tools/simulate_device.py --host http://127.0.0.1:8000 --fps 8 --seconds 10
+> Windowsで別PCからUIにアクセスする場合、ファイアウォールで `8000/tcp` の受信許可が必要になることがある。
+
+### 2.4 実機なしスモークテスト（推奨）
+```powershell
+cd collector
+uv run python ../tools/simulate_device.py --host http://127.0.0.1:8000 --fps 8 --seconds 10
 ```
+
 - UIのPreviewが更新されること
 - セッション開始中なら dataset/ に保存されること
 
