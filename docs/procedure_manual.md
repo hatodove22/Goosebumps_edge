@@ -1,4 +1,4 @@
-﻿# 鳥肌（立毛）検出エッジAIシステム — 手順書（Procedure Manual） v1.4
+﻿  # 鳥肌（立毛）検出エッジAIシステム — 手順書（Procedure Manual） v1.4
 
 更新日: 2026-01-16
 
