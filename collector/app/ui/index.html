@@ -72,7 +72,7 @@
       <div>
         <input id="pwm" type="range" min="0" max="255" value="120" oninput="pwmLabel.innerText=this.value">
         <span id="pwmLabel">120</span>
-        <button onclick="setLed()">Send to device</button>
+        <button id="btnSetLed" onclick="setLed()">Send to device</button>
         <label style="margin-left:8px;"><input id="autoLuma" type="checkbox" onchange="setAutoLuma()"> Auto Luma</label>
 
       </div>
@@ -103,6 +103,12 @@
   <script>
     let gooseOn=false, stimOn=false, motionOn=false, lightOn=false;
     let reactionDelaySec = 1.0; // can expose later
+
+    // UI state for the PWM slider:
+    // The UI polls /session periodically. If we always overwrite the slider value with
+    // s.current_led_pwm, the slider will snap back while the user is dragging.
+    // We therefore keep a "dirty" flag: when the user starts editing, do not overwrite it.
+    let pwmDirty = false;
 
     async function apiGet(path){
       const r = await fetch(path);
@@ -155,9 +161,30 @@
 
         // pwm
         const pwm = document.getElementById('pwm');
+        const btnSetLed = document.getElementById('btnSetLed');
+        const auto = document.getElementById('autoLuma');
+
+        // reflect auto-luma state from server
+        if (auto){
+          auto.checked = !!s.auto_luma_enabled;
+        }
+
+        // If Auto Luma is ON, allow slider to follow server state and disable manual control.
+        if (s.auto_luma_enabled){
+          pwmDirty = false;
+          if (pwm) pwm.disabled = true;
+          if (btnSetLed) btnSetLed.disabled = true;
+        } else {
+          if (pwm) pwm.disabled = false;
+          if (btnSetLed) btnSetLed.disabled = false;
+        }
         if (s.current_led_pwm !== null && s.current_led_pwm !== undefined){
-          pwm.value = s.current_led_pwm;
-          pwmLabel.innerText = s.current_led_pwm;
+          // Do not overwrite user input while interacting with the slider
+          const isEditing = pwmDirty || (document.activeElement === pwm);
+          if (!isEditing){
+            pwm.value = s.current_led_pwm;
+            pwmLabel.innerText = s.current_led_pwm;
+          }
         }
 
         // IMU
@@ -194,6 +221,14 @@
     }
 
     setInterval(refresh, 800);
+
+    // Mark PWM slider as dirty when the user interacts with it.
+    // Works for mouse/touch/pen.
+    const pwmEl = document.getElementById('pwm');
+    if (pwmEl){
+      pwmEl.addEventListener('pointerdown', ()=>{ pwmDirty = true; });
+      pwmEl.addEventListener('input', ()=>{ pwmDirty = true; });
+    }
 
     async function startSession(){
       const subject = document.getElementById('subject').value.trim();
@@ -244,7 +279,18 @@
     async function setLed(){
       const pwm = parseInt(document.getElementById('pwm').value);
       const res = await deviceCmd({cmd:'set_led', pwm:pwm});
+      // After sending, allow polling to keep the slider in sync again.
+      pwmDirty = false;
       alert(JSON.stringify(res));
+    }
+
+    async function setAutoLuma(){
+      const enabled = !!document.getElementById('autoLuma').checked;
+      const res = await apiPost('/lighting/auto', {enabled});
+      // When toggling, clear dirty state so the UI can follow server immediately.
+      pwmDirty = false;
+      document.getElementById('deviceResp').innerText = JSON.stringify(res);
+      return res;
     }
 
     async function deviceCmd(obj){

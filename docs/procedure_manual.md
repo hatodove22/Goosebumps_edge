@@ -253,6 +253,31 @@ python tools/make_labels.py dataset/subject_001/2026-01-15_session_01
 
 ---
 
+## Update v1.4: ロギング・解析・エッジ推論フロー
+
+詳細は `docs/analysis_and_edge_methods.md` を参照。
+
+### 解析フロー（最小）
+1. `tools/validate_session.py` でセッション整合性を確認
+2. UIの `Generate Report` でFFTゲートを確認（GIGO回避）
+3. `tools/make_labels.py` で `labels.csv` を生成
+4. `tools/derive_features.py` で特徴量とAUC/平均差を確認
+
+### 追加（プランB: LBP+LR）
+- 学習: `tools/train_lbp_lr.py`（モデルJSON生成）
+- 推論: `tools/infer_lbp_lr.py`（セッション単位の確認）
+- 組込み: `tools/export_lbp_lr_header.py`（ファーム用ヘッダ生成）
+
+Windows（uv）例:
+```powershell
+cd collector
+uv run python ../tools/derive_features.py ../dataset/subject_001/2026-01-16_session_01
+uv run python ../tools/train_lbp_lr.py --dataset-root ../dataset --out ../models/lbp_lr_model.json --require-motion-ok
+uv run python ../tools/export_lbp_lr_header.py --model ../models/lbp_lr_model.json --out ../firmware/atoms3r_m12_streamer/include/model_lbp_lr.h
+```
+
+---
+
 
 ## Update v1.3: Auto Luma と ROI枠表示
 
