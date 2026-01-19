@@ -1,4 +1,4 @@
-# Example configuration (copy to config.yaml and edit)
+# Configuration (copied from config_example.yaml)
 project:
   dataset_root: "dataset"
 network:
@@ -19,10 +19,10 @@ lighting:
   auto_kp: 0.8
   auto_ki: 0.05
 quality:
-  blur_threshold: 80.0
+  blur_threshold: 7.5
   sat_white_ratio_max: 0.02
   sat_black_ratio_max: 0.02
-  imu_gnorm_threshold: 150.0
+  imu_gnorm_threshold: 1.5
 pilot_fft:
   smooth_window_sec: 1.0
   threshold_sigma: 3.0
