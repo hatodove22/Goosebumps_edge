@@ -145,7 +145,7 @@ Serialに以下が出ることを確認する。
 ### 4.2 Collector UI準備
 1. UIを開く（/ui/）
 2. Previewで皮膚がROI中心に入っていることを確認する
-3. まだ device_ip が表示されない場合は、Atomが /upload を送っていない可能性がある
+3. まだ device_ip が表示されない場合は、Atomが /upload を送っていない可能性があるのでリセットボタンを押す
 
 ---
 
