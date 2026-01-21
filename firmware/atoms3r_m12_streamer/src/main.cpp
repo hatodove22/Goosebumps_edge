@@ -28,6 +28,10 @@ static int g_frame_size = FRAME_SIZE_DEFAULT;
 static uint8_t g_led_pwm = LED_PWM_DEFAULT;
 static const int LEDC_CH = 0;
 
+// Camera power timing (some AtomS3R-CAM units show SCCB probe races on cold boot)
+static uint32_t g_cam_power_on_ms = 0;
+static const bool ENABLE_CAM_I2C_SCAN = false;  // debug only; often returns "no devices" before XCLK is running
+
 // IMU runtime state
 static BMI270 g_imu;
 static bool g_imu_ok = false;
@@ -40,13 +44,40 @@ static bool is_m12_variant() {
   return (CAMERA_VARIANT == 1);
 }
 
-static void camera_power_enable() {
+static void camera_power_enable(bool force_restart_timer = false) {
   pinMode(18, OUTPUT);
   digitalWrite(18, LOW);  // enable camera power
-  delay(200);             // allow sensor power to stabilize (more margin)
+  if (force_restart_timer || g_cam_power_on_ms == 0) {
+    g_cam_power_on_ms = millis();
+  }
+}
+
+static void camera_power_disable() {
+  pinMode(18, OUTPUT);
+  digitalWrite(18, HIGH);  // disable camera power (POWER_N active-low)
+}
+
+static void camera_wait_min_on_time(uint32_t min_on_ms) {
+  if (g_cam_power_on_ms == 0) return;
+  const uint32_t elapsed = millis() - g_cam_power_on_ms;
+  if (elapsed < min_on_ms) {
+    delay(min_on_ms - elapsed);
+  }
+}
+
+static void camera_power_cycle(uint32_t off_ms = 50, uint32_t min_on_ms = 500) {
+  camera_power_disable();
+  delay(off_ms);
+  g_cam_power_on_ms = 0;
+  camera_power_enable(true);
+  camera_wait_min_on_time(min_on_ms);
 }
 
 static void scan_camera_i2c_once() {
+  // NOTE:
+  // Many camera sensors require XCLK to be running before SCCB responds.
+  // Therefore, an I2C scan performed *before* esp_camera_init() may legitimately find no devices.
+  // This function is kept only for debugging and is disabled by default.
   // Use I2C port 1 for CAM_SDA/CAM_SCL (GPIO12/GPIO9) to avoid Wire (IMU) on I2C0.
   TwoWire WireCam(1);
   WireCam.begin(CAM_PIN_SIOD, CAM_PIN_SIOC, 100000);
@@ -143,7 +174,7 @@ static void udp_init() {
 
 static camera_config_t make_camera_config() {
   // Ensure camera power is enabled (especially for AtomS3R-CAM / GC0308).
-  camera_power_enable();
+  camera_power_enable(false);
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_1;     // camera uses different channel internally
@@ -201,16 +232,37 @@ static bool camera_init() {
   }
 
   camera_config_t cfg = make_camera_config();
-  scan_camera_i2c_once();
+
+  // Ensure the sensor has been powered long enough (helps cold-boot SCCB probe races).
+  camera_wait_min_on_time(500);
+
   Serial.printf("[CAM] pins: SDA=%d SCL=%d VSYNC=%d HREF=%d PCLK=%d XCLK=%d D0=%d D1=%d D2=%d D3=%d D4=%d D5=%d D6=%d D7=%d POWER_N=%d\n",
                 CAM_PIN_SIOD, CAM_PIN_SIOC, CAM_PIN_VSYNC, CAM_PIN_HREF, CAM_PIN_PCLK, CAM_PIN_XCLK,
                 CAM_PIN_D0, CAM_PIN_D1, CAM_PIN_D2, CAM_PIN_D3, CAM_PIN_D4, CAM_PIN_D5, CAM_PIN_D6, CAM_PIN_D7,
                 18);
   Serial.printf("[CAM] cfg: xclk=%d pixel_format=%d framesize=%d jpeg_quality=%d pin_pwdn=%d sccb_port=%d\n",
                 (int)cfg.xclk_freq_hz, (int)cfg.pixel_format, (int)cfg.frame_size, (int)cfg.jpeg_quality, (int)cfg.pin_pwdn, (int)cfg.sccb_i2c_port);
-  esp_err_t err = esp_camera_init(&cfg);
-  if (err != ESP_OK) {
+
+  const int kMaxAttempts = 5;
+  esp_err_t err = ESP_FAIL;
+  for (int attempt = 1; attempt <= kMaxAttempts; attempt++) {
+    Serial.printf("[CAM] init attempt %d/%d\n", attempt, kMaxAttempts);
+    if (ENABLE_CAM_I2C_SCAN && attempt == 1) {
+      scan_camera_i2c_once();
+    }
+    err = esp_camera_init(&cfg);
+    if (err == ESP_OK) break;
+
     Serial.printf("[CAM] init failed: 0x%x\n", (int)err);
+    // Best-effort cleanup and a short power cycle to reset the sensor
+    esp_camera_deinit();
+    camera_power_cycle(80, 600);
+    cfg = make_camera_config();
+    camera_wait_min_on_time(500);
+  }
+
+  if (err != ESP_OK) {
+    Serial.printf("[CAM] init ultimately failed after %d attempts. last_err=0x%x\n", kMaxAttempts, (int)err);
     return false;
   }
 
@@ -504,6 +556,10 @@ void setup() {
 
   Serial.println("\n== AtomS3R-M12 Streamer ==");
   Serial.println("[DEBUG] Serial initialized");
+
+  // Power on camera early. Some units fail SCCB probe on cold boot unless the sensor
+  // has had enough time powered before esp_camera_init().
+  camera_power_enable(true);
   Serial.flush();
   
   Serial.println("[DEBUG] Starting LED init...");

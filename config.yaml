@@ -4,7 +4,7 @@ project:
 network:
   device_udp_cmd_port: 3333
 camera:
-  frame_width: 320
+  frame_width: 240
   frame_height: 240
   jpeg_quality: 20
   target_fps: 12
