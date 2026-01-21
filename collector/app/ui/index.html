@@ -16,6 +16,17 @@
     .sig.good { background: #2ecc71; }
     .sig.warn { background: #f1c40f; }
     .sig.bad { background: #e74c3c; }
+    .status-grid { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 10px; }
+    .status-card { border: 1px solid #e2e2e2; border-radius: 10px; padding: 10px; background: #fafafa; }
+    .status-title { font-weight: 700; margin-bottom: 6px; }
+    .status-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 110px; padding: 6px 10px; border-radius: 999px; font-weight: 800; font-size: 18px; letter-spacing: 0.5px; }
+    .status-pill.on { background: #27ae60; color: #fff; }
+    .status-pill.off { background: #bdc3c7; color: #2c3e50; }
+    .status-buttons { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .btn-on.selected { background: #27ae60; color: #fff; border-color: #1e8a4b; }
+    .btn-off.selected { background: #7f8c8d; color: #fff; border-color: #6c7a80; }
+    .btn-on, .btn-off { border: 1px solid #ccc; border-radius: 6px; }
+    .status-disabled { opacity: 0.55; }
   </style>
 </head>
 <body>
@@ -55,12 +66,40 @@
 
       <h3 style="margin-top:14px;">Label / Events</h3>
       <div>
-        <button onclick="toggleEvent('goose')">Goose ON/OFF (G)</button>
-        <button onclick="toggleEvent('stim')">Stim ON/OFF (S)</button>
-      </div>
-      <div style="margin-top:8px;">
-        <button onclick="toggleEvent('motion')">Confound Motion (M)</button>
-        <button onclick="toggleEvent('light')">Confound Light (L)</button>
+        <div class="status-grid" id="labelStatusGrid">
+          <div class="status-card" id="gooseCard">
+            <div class="status-title">Goosebumps</div>
+            <div class="status-pill off" id="gooseStatus"><span id="gooseStateText">OFF</span></div>
+            <div class="status-buttons">
+              <button class="btn-on" id="gooseOnBtn" onclick="setEvent('goose', true)">Goose ON (G)</button>
+              <button class="btn-off" id="gooseOffBtn" onclick="setEvent('goose', false)">Goose OFF</button>
+            </div>
+          </div>
+          <div class="status-card" id="stimCard">
+            <div class="status-title">Stimulus</div>
+            <div class="status-pill off" id="stimStatus"><span id="stimStateText">OFF</span></div>
+            <div class="status-buttons">
+              <button class="btn-on" id="stimOnBtn" onclick="setEvent('stim', true)">Stim ON (S)</button>
+              <button class="btn-off" id="stimOffBtn" onclick="setEvent('stim', false)">Stim OFF</button>
+            </div>
+          </div>
+          <div class="status-card" id="motionCard">
+            <div class="status-title">Confound Motion</div>
+            <div class="status-pill off" id="motionStatus"><span id="motionStateText">OFF</span></div>
+            <div class="status-buttons">
+              <button class="btn-on" id="motionOnBtn" onclick="setEvent('motion', true)">Motion ON (M)</button>
+              <button class="btn-off" id="motionOffBtn" onclick="setEvent('motion', false)">Motion OFF</button>
+            </div>
+          </div>
+          <div class="status-card" id="lightCard">
+            <div class="status-title">Confound Light</div>
+            <div class="status-pill off" id="lightStatus"><span id="lightStateText">OFF</span></div>
+            <div class="status-buttons">
+              <button class="btn-on" id="lightOnBtn" onclick="setEvent('light', true)">Light ON (L)</button>
+              <button class="btn-off" id="lightOffBtn" onclick="setEvent('light', false)">Light OFF</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div style="margin-top:8px;">
         <span class="k">Note</span>
@@ -101,7 +140,8 @@
   </div>
 
   <script>
-    let gooseOn=false, stimOn=false, motionOn=false, lightOn=false;
+    let eventFlags = {goose:false, stim:false, motion:false, light:false};
+    let sessionActive = false;
     let reactionDelaySec = 1.0; // can expose later
 
     // UI state for the PWM slider:
@@ -127,8 +167,10 @@
 
         // session state
         const s = await apiGet('/session');
+        sessionActive = !!s.active;
         document.getElementById('status').innerText =
           `active=${s.active} fps=${(s.fps||0).toFixed(1)} device_ip=${s.device_ip||'-'} session=${s.session_id||'-'} gb=${(s.last_gb_index||0).toFixed(5)}`;
+        updateEventFlagsFromSession(s);
 
         // baseline
         // IMU / Quality display
@@ -212,6 +254,8 @@
           document.getElementById('qualityStatus').innerText = 'quality: -';
         }
       } catch (e) {
+        sessionActive = false;
+        renderEventFlags();
         document.getElementById('status').innerText = 'collector not responding (is the server running?)';
         document.getElementById('imuStatus').innerText = '';
         document.getElementById('qualityStatus').innerText = '';
@@ -254,20 +298,68 @@
       return await apiPost('/event', {type, value, note, pc_ts_ms});
     }
 
-    async function toggleEvent(which){
-      if (which === 'goose'){
-        gooseOn = !gooseOn;
-        await postEvent(gooseOn ? 'goose_on' : 'goose_off', 1, '');
-      } else if (which === 'stim'){
-        stimOn = !stimOn;
-        await postEvent(stimOn ? 'stim_on' : 'stim_off', 1, '');
-      } else if (which === 'motion'){
-        motionOn = !motionOn;
-        await postEvent(motionOn ? 'confound_motion_start' : 'confound_motion_stop', 1, '');
-      } else if (which === 'light'){
-        lightOn = !lightOn;
-        await postEvent(lightOn ? 'confound_light_start' : 'confound_light_stop', 1, '');
+    function updateEventFlagsFromSession(s){
+      const flags = s.event_flags || {};
+      for (const k of ['goose','stim','motion','light']){
+        if (typeof flags[k] === 'boolean'){
+          eventFlags[k] = flags[k];
+        }
       }
+      renderEventFlags();
+    }
+
+    function setButtonState(id, selected){
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (selected) el.classList.add('selected');
+      else el.classList.remove('selected');
+      el.disabled = !sessionActive;
+    }
+
+    function renderEventFlags(){
+      const kinds = [
+        {k:'goose', label:'Goose'},
+        {k:'stim', label:'Stim'},
+        {k:'motion', label:'Motion'},
+        {k:'light', label:'Light'},
+      ];
+      for (const item of kinds){
+        const isOn = !!eventFlags[item.k];
+        const status = document.getElementById(item.k + 'Status');
+        const text = document.getElementById(item.k + 'StateText');
+        const card = document.getElementById(item.k + 'Card');
+        if (status){
+          status.classList.remove('on','off');
+          status.classList.add(isOn ? 'on' : 'off');
+        }
+        if (text) text.innerText = isOn ? 'ON' : 'OFF';
+        if (card){
+          if (!sessionActive) card.classList.add('status-disabled');
+          else card.classList.remove('status-disabled');
+        }
+        setButtonState(item.k + 'OnBtn', isOn);
+        setButtonState(item.k + 'OffBtn', !isOn);
+      }
+    }
+
+    async function setEvent(kind, desired){
+      if (!sessionActive){
+        return;
+      }
+      let pc_ts_ms = null;
+      if (kind === 'goose'){
+        pc_ts_ms = Date.now() - Math.floor(reactionDelaySec * 1000);
+      }
+      const res = await apiPost('/event/set', {kind, state: desired, note: "", pc_ts_ms});
+      if (res && res.event_flags){
+        eventFlags = Object.assign(eventFlags, res.event_flags);
+      }
+      renderEventFlags();
+    }
+
+    async function toggleEvent(which){
+      const desired = !eventFlags[which];
+      await setEvent(which, desired);
     }
 
     async function sendNote(){

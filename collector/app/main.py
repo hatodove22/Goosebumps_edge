@@ -76,6 +76,9 @@ def get_session():
         "notes": state.notes,
         "fps": state.last_fps,
         "device_ip": state.last_device_ip,
+        "event_flags": state.event_flags,
+        "event_since_ms": state.event_since_ms,
+        "event_last_change_ms": state.event_last_change_ms,
         "baseline": None if state.baseline is None else {
             "mean": state.baseline.mean,
             "std": state.baseline.std,
@@ -221,22 +224,52 @@ def post_event(req: EventReq):
     if state.active and state.storage:
         # pc_ts_ms override if provided (e.g., reaction-delay compensation)
         if req.pc_ts_ms is None:
+            pc_ts_ms = int(time.time() * 1000)
             state.storage.events_csv.append({
-                "pc_ts_ms": int(time.time() * 1000),
+                "pc_ts_ms": pc_ts_ms,
                 "type": req.type,
                 "value": req.value,
                 "note": req.note or "",
             })
         else:
+            pc_ts_ms = int(req.pc_ts_ms)
             state.storage.events_csv.append({
-                "pc_ts_ms": int(req.pc_ts_ms),
+                "pc_ts_ms": pc_ts_ms,
                 "type": req.type,
                 "value": req.value,
                 "note": req.note or "",
             })
+        state.apply_event(req.type, pc_ts_ms, note=req.note or "")
         return {"ok": True}
     return {"ok": False, "error": "no active session"}
 
+
+class EventSetReq(BaseModel):
+    kind: str
+    state: bool
+    note: str = ""
+    pc_ts_ms: Optional[int] = None
+
+
+@app.post("/event/set")
+def post_event_set(req: EventSetReq):
+    if not (state.active and state.storage):
+        return {"ok": False, "error": "no active session", "event_flags": state.event_flags}
+    pc_ts_ms = int(time.time() * 1000) if req.pc_ts_ms is None else int(req.pc_ts_ms)
+    changed, event_type = state.set_flag(req.kind, bool(req.state), pc_ts_ms, note=req.note or "")
+    if changed and event_type:
+        state.storage.events_csv.append({
+            "pc_ts_ms": pc_ts_ms,
+            "type": event_type,
+            "value": 1,
+            "note": req.note or "",
+        })
+    return {
+        "ok": True,
+        "changed": changed,
+        "event_type": event_type,
+        "event_flags": state.event_flags,
+    }
 
 class CalibReq(BaseModel):
     window_sec: float = 10.0

@@ -73,6 +73,26 @@ class SessionState:
     # Config
     config: Dict[str, Any] = field(default_factory=dict)
 
+    # Event flags (server-authoritative toggle states)
+    event_flags: Dict[str, bool] = field(default_factory=lambda: {
+        "goose": False,
+        "stim": False,
+        "motion": False,
+        "light": False,
+    })
+    event_since_ms: Dict[str, Optional[int]] = field(default_factory=lambda: {
+        "goose": None,
+        "stim": None,
+        "motion": None,
+        "light": None,
+    })
+    event_last_change_ms: Dict[str, Optional[int]] = field(default_factory=lambda: {
+        "goose": None,
+        "stim": None,
+        "motion": None,
+        "light": None,
+    })
+
     def update_fps(self) -> None:
         now = time.time()
         self._rx_times.append(now)
@@ -108,11 +128,31 @@ class SessionState:
 
         # default LED pwm from config
         self.current_led_pwm = int(self.config.get("lighting", {}).get("pwm_default", 0))
+        # reset event flags
+        for k in self.event_flags.keys():
+            self.event_flags[k] = False
+            self.event_since_ms[k] = None
+            self.event_last_change_ms[k] = None
         self.storage.log_event("session_start", 1, note="")
 
     def stop_session(self) -> None:
         if not self.active or not self.storage:
             return
+        # auto-close any open flags before stopping session
+        now_ms = int(time.time() * 1000)
+        offset = 0
+        for kind, is_on in list(self.event_flags.items()):
+            if is_on:
+                pc_ts_ms = now_ms + offset
+                offset += 1
+                changed, event_type = self.set_flag(kind, False, pc_ts_ms, note="auto_close_on_stop")
+                if changed and event_type and self.storage and self.storage.events_csv:
+                    self.storage.events_csv.append({
+                        "pc_ts_ms": pc_ts_ms,
+                        "type": event_type,
+                        "value": 1,
+                        "note": "auto_close_on_stop",
+                    })
         self.storage.log_event("session_stop", 1, note="")
         self.storage.close()
         self.storage = None
@@ -318,3 +358,40 @@ class SessionState:
         else:
             gb_binary = (gb_smooth > thr).astype(np.int32)
         return t_ms, gb_smooth, gb_binary, thr
+
+    def apply_event(self, event_type: str, pc_ts_ms: int, note: str = "") -> None:
+        mapping = {
+            "goose_on": ("goose", True),
+            "goose_off": ("goose", False),
+            "stim_on": ("stim", True),
+            "stim_off": ("stim", False),
+            "confound_motion_start": ("motion", True),
+            "confound_motion_stop": ("motion", False),
+            "confound_light_start": ("light", True),
+            "confound_light_stop": ("light", False),
+        }
+        if event_type not in mapping:
+            return
+        kind, desired = mapping[event_type]
+        if self.event_flags.get(kind) != desired:
+            self.event_flags[kind] = desired
+            self.event_last_change_ms[kind] = int(pc_ts_ms)
+            self.event_since_ms[kind] = int(pc_ts_ms) if desired else None
+
+    def set_flag(self, kind: str, desired: bool, pc_ts_ms: int, note: str = "") -> Tuple[bool, Optional[str]]:
+        mapping = {
+            "goose": ("goose_on", "goose_off"),
+            "stim": ("stim_on", "stim_off"),
+            "motion": ("confound_motion_start", "confound_motion_stop"),
+            "light": ("confound_light_start", "confound_light_stop"),
+        }
+        if kind not in mapping:
+            return False, None
+        current = bool(self.event_flags.get(kind, False))
+        if current == desired:
+            return False, None
+        self.event_flags[kind] = desired
+        self.event_last_change_ms[kind] = int(pc_ts_ms)
+        self.event_since_ms[kind] = int(pc_ts_ms) if desired else None
+        on_type, off_type = mapping[kind]
+        return True, (on_type if desired else off_type)
