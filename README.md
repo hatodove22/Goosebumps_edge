@@ -10,6 +10,10 @@ This repository includes:
   - Web UI for preview, labeling (event logging), LED control (UDP JSON), and pilot FFT gate
   - Auto Luma (PI control) and ROI overlay to validate data quality before labeling/ML
   - Generates a pilot report (`pilot_report.json` + plot) to avoid GIGO
+- **Goosebumps Hub (FastAPI)**
+  - Viewer + device control for AtomS3R-CAM real-time inference
+  - Polls `/status`, proxies `/control` and `/snapshot`
+  - OSC event relay and CSV logging (`infer.csv`, `pred_events.csv`)
 - **Firmware**
   - `firmware/atoms3r_m12_streamer`: streaming JPEG uploader with UDP JSON control (optional BMI270 IMU)
   - `firmware/atoms3r_cam_realtime_infer`: on-device inference (LBP + Logistic Regression) with optional upload/event posts
@@ -21,6 +25,7 @@ This repository includes:
 ## Repository layout
 - `collector/`: Collector PC server + UI
 - `firmware/`: device firmware (streamer + real-time inference)
+- `goosebumps_hub/`: PC hub (viewer + control + OSC)
 - `tools/`: training/export utilities and simulators
 - `docs/`: Japanese docs
 - `docs/en/`: English docs
@@ -33,6 +38,7 @@ This repository includes:
 - `docs/en/dataset_schema.md`
 - `docs/en/test_plan.md`
 - `docs/en/open_source_release_guide.md`
+- `docs/goosebumps_spec_v0_3.md` (Hub / AtomS3R-CAM real-time inference spec, JP)
 
 (See `docs/` for the Japanese versions.)
 
@@ -79,6 +85,19 @@ uv run python ../tools/simulate_device.py --host http://127.0.0.1:8000 --fps 8 -
 ```
 
 If you want to save data, click **Session Start** in the UI before running the simulator.
+
+## Quickstart (Goosebumps Hub)
+
+The Hub also uses **uv**.
+
+```powershell
+cd goosebumps_hub
+uv sync
+uv run uvicorn hub.app:app --host 0.0.0.0 --port 8000
+```
+
+Open UI:
+- `http://localhost:8000/`
 
 ## License
 TBD (add a LICENSE before open-sourcing).

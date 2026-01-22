@@ -1,6 +1,6 @@
 # Open Source Release Guide - Goosebumps EdgeAI v1.2
 
-Updated: 2026-01-16
+Updated: 2026-01-22
 
 This document summarizes a checklist and recommended structure for releasing this project as open source in a way that is **reproducible** and **hard to misuse**.
 
@@ -29,6 +29,10 @@ This document summarizes a checklist and recommended structure for releasing thi
 - `firmware/atoms3r_m12_streamer/` (device side PlatformIO)
 - `tools/` (simulate/validate/make_labels)
 
+Optional (if included):
+- `goosebumps_hub/` (Viewer/Control/OSC)
+- `firmware/atoms3r_cam_realtime_infer/` (on-device inference)
+
 ---
 
 ## 3. Required README Contents (At Release)
@@ -54,6 +58,8 @@ repo/
   collector/                 # PC receiver + UI + pilot gate
   firmware/
     atoms3r_m12_streamer/    # PlatformIO project (OV3660 + BMI270 + UDP control)
+    atoms3r_cam_realtime_infer/ # AtomS3R-CAM on-device inference (optional)
+  goosebumps_hub/            # Viewer + Control + OSC (optional)
   tools/                     # simulator / validators / converters
   docs/                      # specs, manuals, schema
   hardware/                  # (recommended) STL/STEP, wiring diagram, BOM

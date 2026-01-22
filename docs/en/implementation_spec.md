@@ -42,7 +42,7 @@ The spec assumes role separation between implementers and operators and details 
 
 ## 0. Reference Implementation (Source of Truth)
 
-This spec v1.2 assumes the following reference implementation (included code).  
+This spec v1.4 assumes the following reference implementation (included code).  
 If you delegate implementation, align behavior to this reference first.
 
 - Collector PC (FastAPI + Web UI): `collector/`
@@ -66,7 +66,7 @@ If you delegate implementation, align behavior to this reference first.
 3. Immediately after collection, judge detectability using **FFT-based goosebumps index (gb_index)** and a **gate** to avoid GIGO.
 4. After passing the gate, proceed to training, quantization, and edge inference if needed.
 
-### 1.2 Non-goals (Not required in v1.2)
+### 1.2 Non-goals (Not required in v1.4)
 - Automatic ROI tracking (fixed rig assumed)
 - Medical diagnosis or clinical quality guarantee
 - Full generalization across individuals (establish observability and gate first)
