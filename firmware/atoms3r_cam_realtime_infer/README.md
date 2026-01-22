@@ -1,11 +1,11 @@
-# AtomS3R-CAM real-time inference (LBP + Logistic Regression)
+# AtomS3R-CAM Real-Time Edge Inference (LBP + Logistic Regression)
 
-This firmware runs **on-device** goosebumps inference on **M5Stack AtomS3R-CAM (GC0308)**:
+This firmware performs **on-device goosebumps inference** on the **M5Stack AtomS3R-CAM (GC0308)**:
 
 - Capture RGB565 frames
-- Crop fixed center ROI
-- Downsample to 64×64 grayscale
-- LBP histogram (256 bins)
+- Crop a fixed center ROI
+- Downsample to **64x64** grayscale
+- Compute LBP histogram (256 bins)
 - Logistic Regression probability + EMA smoothing + hysteresis
 - Optional: upload frames to Collector (`/upload`) and/or post state-change events to (`/event`)
 
@@ -32,7 +32,7 @@ Edit `include/user_config.h`:
 
 - `WIFI_SSID` / `WIFI_PASS`
 - `COLLECTOR_HOST` / `COLLECTOR_PORT`
-- Optionally set:
+- Optional flags:
   - `ENABLE_FRAME_UPLOAD` (true/false)
   - `ENABLE_EVENT_POST` (true/false)
 
@@ -60,5 +60,5 @@ Examples (JSON):
 ## Notes
 
 - AtomS3R-CAM requires **GPIO18 LOW** before `esp_camera_init()` to enable camera power.
-- GC0308 does **not** output JPEG natively; frame upload encodes RGB565→JPEG in software (CPU heavy).
+- GC0308 does **not** output JPEG natively; frame upload encodes RGB565 to JPEG in software (CPU heavy).
   If you only need on-device inference, set `ENABLE_FRAME_UPLOAD=false`.
