@@ -88,6 +88,9 @@ static uint8_t g_gray[INPUT_SIZE * INPUT_SIZE];
 static uint32_t g_hist[LBP_LR_BINS];
 
 // -------------------- Helpers --------------------
+// Forward declarations for functions used before their definitions.
+static bool ensure_camera_enabled(bool enable, String* err);
+
 static inline float clampf(float x, float lo, float hi) {
   if (x < lo) return lo;
   if (x > hi) return hi;
@@ -696,7 +699,7 @@ static void handle_udp_cmd() {
 
 // -------------------- HTTP API (/status, /control, /snapshot) --------------------
 
-static void build_status_json(JsonDocument& doc) {
+static void build_status_json(JsonObject doc) {
   doc["device_id"] = DEVICE_ID;
   doc["fw_version"] = FW_VERSION;
   doc["uptime_ms"] = (uint32_t)millis();
@@ -738,7 +741,8 @@ static void build_status_json(JsonDocument& doc) {
 static void http_send_json(int code, const JsonDocument& doc) {
   Http.setContentLength(CONTENT_LENGTH_UNKNOWN);
   Http.send(code, "application/json", "");
-  serializeJson(doc, Http.client());
+  WiFiClient client = Http.client();
+  serializeJson(doc, client);
 }
 
 static bool ensure_camera_enabled(bool enable, String* err) {
@@ -766,7 +770,7 @@ static bool ensure_camera_enabled(bool enable, String* err) {
 
 static void handle_http_status() {
   StaticJsonDocument<1024> doc;
-  build_status_json(doc);
+  build_status_json(doc.to<JsonObject>());
   http_send_json(200, doc);
 }
 
@@ -927,7 +931,7 @@ static void handle_http_snapshot() {
   uint8_t* jpg_buf = nullptr;
   size_t jpg_len = 0;
   ok = fmt2jpg(
-    (const uint8_t*)roi_buf,
+    (uint8_t*)roi_buf,
     (size_t)roi * (size_t)roi * sizeof(uint16_t),
     roi,
     roi,
