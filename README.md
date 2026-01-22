@@ -39,6 +39,7 @@ This repository includes:
 - `docs/en/test_plan.md`
 - `docs/en/open_source_release_guide.md`
 - `docs/goosebumps_spec_v0_3.md` (Hub / AtomS3R-CAM real-time inference spec, JP)
+- `docs/en/goosebumps_spec_v0_3.md` (Hub / AtomS3R-CAM real-time inference spec, EN)
 
 (See `docs/` for the Japanese versions.)
 
