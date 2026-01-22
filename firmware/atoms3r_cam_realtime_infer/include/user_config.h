@@ -24,6 +24,45 @@ static const char* COLLECTOR_EVENT_PATH = "/event";
 static const uint16_t UDP_CMD_PORT = 3333;
 
 // ===============================
+// On-device HTTP status/control API
+// ===============================
+// Enables a lightweight HTTP server on the device.
+// - GET  /status   : JSON status + latest inference
+// - POST /control  : JSON control (camera on/off, zscore on/off, thresholds...)
+// - GET  /snapshot : ROI snapshot (JPEG, on-demand)
+static const bool ENABLE_HTTP_SERVER = true;
+static const uint16_t HTTP_SERVER_PORT = 80;
+
+// Device identity (shown in /status)
+static const char* DEVICE_ID = "atoms3r_cam_01";
+static const char* FW_VERSION = "gb_atoms3r_cam_infer_v2.2";
+
+// Snapshot settings
+// JPEG quality: 2..63 (lower = higher quality, larger size)
+static const uint8_t SNAPSHOT_JPEG_QUALITY = 20;
+
+// ===============================
+// z-score event detection (on-device)
+// ===============================
+// If DEFAULT_USE_ZSCORE=true, the device uses z-score hysteresis for state
+// detection instead of probability hysteresis.
+// z is computed from p_ema using an EMA mean/variance (lightweight).
+static const bool DEFAULT_USE_ZSCORE = true;
+static const float ZSCORE_EMA_TAU_SEC = 30.0f;  // baseline adaptation speed
+static const float ZSCORE_ON_DEFAULT  = 4.0f;
+static const float ZSCORE_OFF_DEFAULT = 3.0f;
+static const float ZSCORE_EPS = 1e-3f;
+
+// ===============================
+// Optional telemetry push (device -> PC)
+// ===============================
+// If enabled, the device sends JSON telemetry periodically via UDP.
+static const bool ENABLE_TELEMETRY_PUSH = false;
+static const char* TELEMETRY_HOST_DEFAULT = "192.168.137.1";
+static const uint16_t TELEMETRY_UDP_PORT_DEFAULT = 9001;
+static const float TELEMETRY_HZ_DEFAULT = 10.0f;
+
+// ===============================
 // Camera stream defaults
 // ===============================
 // If ENABLE_FRAME_UPLOAD=false, the device will NOT upload frames.

@@ -23,6 +23,9 @@
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
 
+// Lightweight HTTP server for /status, /control, /snapshot
+#include <WebServer.h>
+
 #include "esp_camera.h"
 #include "img_converters.h"  // fmt2jpg
 
@@ -32,6 +35,7 @@
 
 // -------------------- Runtime state --------------------
 static WiFiUDP Udp;
+static WebServer Http(HTTP_SERVER_PORT);
 static uint32_t g_frame_id = 0;
 
 // Frame upload (streaming) control
@@ -47,11 +51,30 @@ static const int LEDC_CH = 0;
 // Inference state
 static float g_prob_raw = NAN;
 static float g_prob_ema = NAN;
+static float g_prob_tau_sec = PROB_EMA_TAU_SEC;
+static float g_z = NAN;
 static bool g_state_on = false;
 static float g_thr_on = LBP_LR_THRESHOLD;
 static float g_thr_off = (LBP_LR_THRESHOLD - HYSTERESIS_DELTA > 0.0f) ? (LBP_LR_THRESHOLD - HYSTERESIS_DELTA) : 0.0f;
+static bool g_use_zscore = DEFAULT_USE_ZSCORE;
+static float g_z_tau_sec = ZSCORE_EMA_TAU_SEC;
+static float g_z_on = ZSCORE_ON_DEFAULT;
+static float g_z_off = ZSCORE_OFF_DEFAULT;
+static float g_z_mu = NAN;
+static float g_z_var = NAN;
 static uint32_t g_last_infer_ms = 0;
 static uint32_t g_last_capture_ms = 0;
+
+// Camera / inference enable flags (runtime controllable)
+static bool g_camera_enabled = true;
+static bool g_infer_enabled = true;
+
+// Telemetry push (device -> PC)
+static bool g_telemetry_enabled = ENABLE_TELEMETRY_PUSH;
+static IPAddress g_telemetry_ip;
+static uint16_t g_telemetry_port = TELEMETRY_UDP_PORT_DEFAULT;
+static float g_telemetry_hz = TELEMETRY_HZ_DEFAULT;
+static uint32_t g_last_telemetry_ms = 0;
 
 // Calibration state (baseline p during "no goosebumps" period)
 static bool g_calib_active = false;
@@ -286,9 +309,13 @@ static bool http_upload_frame_with_pred(const camera_fb_t* fb) {
   // this is useful for future server-side logging without changing firmware).
   if (isfinite(g_prob_raw)) head += part_field("gb_prob", String(g_prob_raw, 6));
   if (isfinite(g_prob_ema)) head += part_field("gb_prob_ema", String(g_prob_ema, 6));
+  if (isfinite(g_z)) head += part_field("gb_z", String(g_z, 6));
+  head += part_field("gb_use_zscore", String(g_use_zscore ? 1 : 0));
   head += part_field("gb_state", String(g_state_on ? 1 : 0));
   head += part_field("gb_thr_on", String(g_thr_on, 6));
   head += part_field("gb_thr_off", String(g_thr_off, 6));
+  head += part_field("gb_z_on", String(g_z_on, 4));
+  head += part_field("gb_z_off", String(g_z_off, 4));
 
   head += "--" + boundary + "\r\n";
   head += "Content-Disposition: form-data; name=\"image\"; filename=\"frame.jpg\"\r\n";
@@ -435,9 +462,44 @@ static void update_prob_ema(float p, float dt_sec) {
     g_prob_ema = p;
     return;
   }
-  const float tau = (PROB_EMA_TAU_SEC > 1e-3f) ? PROB_EMA_TAU_SEC : 0.8f;
+  const float tau = (g_prob_tau_sec > 1e-3f) ? g_prob_tau_sec : 0.8f;
   const float a = expf(-dt_sec / tau);
   g_prob_ema = a * g_prob_ema + (1.0f - a) * p;
+}
+
+static void reset_zscore_stats(float p_init) {
+  g_z_mu = p_init;
+  g_z_var = 1e-4f;  // small non-zero
+  g_z = 0.0f;
+}
+
+static void update_zscore(float p_ema, float dt_sec) {
+  // Lightweight z-score based on EMA mean/variance of p_ema.
+  // z = (p_ema - mu) / sqrt(var)
+  if (!isfinite(p_ema)) {
+    g_z = NAN;
+    return;
+  }
+  if (!isfinite(g_z_mu) || !isfinite(g_z_var)) {
+    reset_zscore_stats(p_ema);
+    return;
+  }
+
+  const float tau = (g_z_tau_sec > 1e-3f) ? g_z_tau_sec : ZSCORE_EMA_TAU_SEC;
+  const float a = expf(-dt_sec / tau);
+
+  // Use previous mean to compute delta for variance update.
+  const float mu_prev = g_z_mu;
+  const float delta = p_ema - mu_prev;
+  g_z_mu = a * g_z_mu + (1.0f - a) * p_ema;
+  g_z_var = a * g_z_var + (1.0f - a) * (delta * delta);
+
+  const float denom = sqrtf(g_z_var);
+  if (denom < ZSCORE_EPS) {
+    g_z = 0.0f;
+  } else {
+    g_z = (p_ema - g_z_mu) / denom;
+  }
 }
 
 static void calib_start() {
@@ -519,11 +581,17 @@ static void handle_udp_cmd() {
     out["ip"] = WiFi.localIP().toString();
     out["upload"] = g_upload_enabled;
     out["led_pwm"] = g_led_pwm;
+    out["camera_enabled"] = g_camera_enabled;
+    out["infer_enabled"] = g_infer_enabled;
+    out["use_zscore"] = g_use_zscore;
     out["gb_state"] = g_state_on ? 1 : 0;
     if (isfinite(g_prob_raw)) out["gb_prob"] = g_prob_raw;
     if (isfinite(g_prob_ema)) out["gb_prob_ema"] = g_prob_ema;
+    if (isfinite(g_z)) out["gb_z"] = g_z;
     out["thr_on"] = g_thr_on;
     out["thr_off"] = g_thr_off;
+    out["z_on"] = g_z_on;
+    out["z_off"] = g_z_off;
     out["calib_active"] = g_calib_active;
   } else if (strcmp(cmd, "start_upload") == 0) {
     g_upload_enabled = true;
@@ -541,6 +609,10 @@ static void handle_udp_cmd() {
     out["ok"] = true;
     out["pwm"] = pwm;
   } else if (strcmp(cmd, "set_param") == 0) {
+    if (in.containsKey("tau_sec")) {
+      g_prob_tau_sec = clampf((float)(in["tau_sec"] | (double)g_prob_tau_sec), 0.05f, 10.0f);
+      out["tau_sec"] = g_prob_tau_sec;
+    }
     if (in.containsKey("target_fps")) {
       int fps = in["target_fps"] | (int)g_target_fps;
       if (fps < 1) fps = 1;
@@ -565,6 +637,42 @@ static void handle_udp_cmd() {
       g_thr_off = clampf(g_thr_off, 0.0f, g_thr_on);
       out["thr_off"] = g_thr_off;
     }
+    if (in.containsKey("use_zscore")) {
+      const bool new_use = in["use_zscore"].as<bool>();
+      if (new_use != g_use_zscore) {
+        g_use_zscore = new_use;
+        if (isfinite(g_prob_ema)) reset_zscore_stats(g_prob_ema);
+        else { g_z_mu = NAN; g_z_var = NAN; g_z = NAN; }
+      }
+      out["use_zscore"] = g_use_zscore;
+    }
+    if (in.containsKey("z_tau_sec")) {
+      g_z_tau_sec = clampf((float)(in["z_tau_sec"] | (double)g_z_tau_sec), 1.0f, 300.0f);
+      out["z_tau_sec"] = g_z_tau_sec;
+    }
+    if (in.containsKey("z_on")) {
+      g_z_on = clampf((float)(in["z_on"] | (double)g_z_on), -10.0f, 20.0f);
+      out["z_on"] = g_z_on;
+    }
+    if (in.containsKey("z_off")) {
+      g_z_off = clampf((float)(in["z_off"] | (double)g_z_off), -10.0f, g_z_on);
+      out["z_off"] = g_z_off;
+    }
+    if (in.containsKey("infer_enabled")) {
+      g_infer_enabled = in["infer_enabled"].as<bool>();
+      out["infer_enabled"] = g_infer_enabled;
+    }
+    if (in.containsKey("camera_enabled")) {
+      String cam_err;
+      const bool en = in["camera_enabled"].as<bool>();
+      if (!ensure_camera_enabled(en, &cam_err)) {
+        out["ok"] = false;
+        out["error"] = cam_err;
+        send_udp_response(rip, rport, out);
+        return;
+      }
+      out["camera_enabled"] = g_camera_enabled;
+    }
     out["ok"] = true;
   } else if (strcmp(cmd, "calib_start") == 0) {
     calib_start();
@@ -586,7 +694,307 @@ static void handle_udp_cmd() {
   send_udp_response(rip, rport, out);
 }
 
+// -------------------- HTTP API (/status, /control, /snapshot) --------------------
+
+static void build_status_json(JsonDocument& doc) {
+  doc["device_id"] = DEVICE_ID;
+  doc["fw_version"] = FW_VERSION;
+  doc["uptime_ms"] = (uint32_t)millis();
+
+  JsonObject wifi = doc.createNestedObject("wifi");
+  wifi["ip"] = WiFi.localIP().toString();
+  wifi["rssi"] = WiFi.RSSI();
+
+  doc["camera_enabled"] = g_camera_enabled;
+  doc["infer_enabled"] = g_infer_enabled;
+  doc["upload_enabled"] = g_upload_enabled;
+  doc["use_zscore"] = g_use_zscore;
+
+  JsonObject params = doc.createNestedObject("params");
+  params["tau_sec"] = (double)g_prob_tau_sec;
+  params["thr_on"] = (double)g_thr_on;
+  params["thr_off"] = (double)g_thr_off;
+  params["z_tau_sec"] = (double)g_z_tau_sec;
+  params["z_on"] = (double)g_z_on;
+  params["z_off"] = (double)g_z_off;
+  params["target_fps"] = g_target_fps;
+  params["led_pwm"] = g_led_pwm;
+
+  JsonObject tele = doc.createNestedObject("telemetry");
+  tele["enabled"] = g_telemetry_enabled;
+  tele["host"] = g_telemetry_ip.toString();
+  tele["port"] = g_telemetry_port;
+  tele["hz"] = (double)g_telemetry_hz;
+
+  JsonObject infer = doc.createNestedObject("infer");
+  infer["t_ms"] = (uint32_t)g_last_infer_ms;
+  infer["frame_id"] = (uint32_t)g_frame_id;
+  if (isfinite(g_prob_raw)) infer["p_raw"] = (double)g_prob_raw;
+  if (isfinite(g_prob_ema)) infer["p_ema"] = (double)g_prob_ema;
+  if (isfinite(g_z)) infer["z"] = (double)g_z;
+  infer["state"] = g_state_on ? 1 : 0;
+}
+
+static void http_send_json(int code, const JsonDocument& doc) {
+  Http.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  Http.send(code, "application/json", "");
+  serializeJson(doc, Http.client());
+}
+
+static bool ensure_camera_enabled(bool enable, String* err) {
+  if (enable == g_camera_enabled) return true;
+  if (!enable) {
+    esp_camera_deinit();
+    // Physically disable sensor power (best-effort)
+    pinMode(CAM_PIN_POWER_N, OUTPUT);
+    digitalWrite(CAM_PIN_POWER_N, HIGH); // POWER_N disable
+    g_camera_enabled = false;
+    return true;
+  }
+
+  // Enable path: re-init camera with retry
+  const bool ok = camera_init_with_retry();
+  if (!ok) {
+    if (err) *err = "camera_init_failed";
+    return false;
+  }
+  g_camera_enabled = true;
+  g_last_capture_ms = 0;
+  g_last_infer_ms = 0;
+  return true;
+}
+
+static void handle_http_status() {
+  StaticJsonDocument<1024> doc;
+  build_status_json(doc);
+  http_send_json(200, doc);
+}
+
+static void handle_http_control() {
+  StaticJsonDocument<1536> out;
+
+  const String body = Http.arg("plain");
+  StaticJsonDocument<1536> in;
+  DeserializationError derr = deserializeJson(in, body);
+  if (derr) {
+    out["ok"] = false;
+    out["error"] = "json_parse_failed";
+    build_status_json(out.createNestedObject("status"));
+    http_send_json(400, out);
+    return;
+  }
+
+  String cam_err;
+  if (in.containsKey("camera_enabled")) {
+    bool en = in["camera_enabled"].as<bool>();
+    if (!ensure_camera_enabled(en, &cam_err)) {
+      out["ok"] = false;
+      out["error"] = cam_err;
+      build_status_json(out.createNestedObject("status"));
+      http_send_json(500, out);
+      return;
+    }
+  }
+
+  if (in.containsKey("infer_enabled")) {
+    g_infer_enabled = in["infer_enabled"].as<bool>();
+  }
+  if (in.containsKey("upload_enabled")) {
+    g_upload_enabled = in["upload_enabled"].as<bool>();
+  }
+  if (in.containsKey("use_zscore")) {
+    const bool new_use = in["use_zscore"].as<bool>();
+    if (new_use != g_use_zscore) {
+      g_use_zscore = new_use;
+      // Reset z-score stats on mode switch for stability
+      if (isfinite(g_prob_ema)) reset_zscore_stats(g_prob_ema);
+      else { g_z_mu = NAN; g_z_var = NAN; g_z = NAN; }
+    }
+  }
+
+  if (in.containsKey("params")) {
+    JsonObject p = in["params"].as<JsonObject>();
+    if (p.containsKey("tau_sec")) {
+      g_prob_tau_sec = clampf((float)p["tau_sec"].as<double>(), 0.05f, 10.0f);
+    }
+    if (p.containsKey("target_fps")) {
+      int fps = p["target_fps"].as<int>();
+      if (fps < 1) fps = 1;
+      if (fps > 30) fps = 30;
+      g_target_fps = (uint16_t)fps;
+    }
+    if (p.containsKey("led_pwm")) {
+      int pwm = p["led_pwm"].as<int>();
+      if (pwm < 0) pwm = 0;
+      if (pwm > 255) pwm = 255;
+      led_set((uint8_t)pwm);
+    }
+    if (p.containsKey("thr_on")) {
+      g_thr_on = clampf((float)p["thr_on"].as<double>(), 0.01f, 0.99f);
+    }
+    if (p.containsKey("thr_off")) {
+      g_thr_off = clampf((float)p["thr_off"].as<double>(), 0.0f, g_thr_on);
+    }
+    if (p.containsKey("z_tau_sec")) {
+      g_z_tau_sec = clampf((float)p["z_tau_sec"].as<double>(), 1.0f, 300.0f);
+    }
+    if (p.containsKey("z_on")) {
+      g_z_on = clampf((float)p["z_on"].as<double>(), -10.0f, 20.0f);
+    }
+    if (p.containsKey("z_off")) {
+      g_z_off = clampf((float)p["z_off"].as<double>(), -10.0f, g_z_on);
+    }
+  }
+
+  if (in.containsKey("telemetry")) {
+    JsonObject t = in["telemetry"].as<JsonObject>();
+    if (t.containsKey("enabled")) {
+      g_telemetry_enabled = t["enabled"].as<bool>();
+    }
+    if (t.containsKey("host")) {
+      const char* host = t["host"].as<const char*>();
+      IPAddress ip;
+      if (host && ip.fromString(host)) {
+        g_telemetry_ip = ip;
+      }
+    }
+    if (t.containsKey("port")) {
+      int port = t["port"].as<int>();
+      if (port < 1) port = 1;
+      if (port > 65535) port = 65535;
+      g_telemetry_port = (uint16_t)port;
+    }
+    if (t.containsKey("hz")) {
+      float hz = (float)t["hz"].as<double>();
+      if (hz < 0.0f) hz = 0.0f;
+      if (hz > 60.0f) hz = 60.0f;
+      g_telemetry_hz = hz;
+    }
+  }
+
+  out["ok"] = true;
+  build_status_json(out.createNestedObject("status"));
+  http_send_json(200, out);
+}
+
+static bool extract_center_roi_rgb565(const camera_fb_t* fb, uint16_t* out_roi, int roi) {
+  if (!fb || !fb->buf || !out_roi) return false;
+  if (fb->format != PIXFORMAT_RGB565) return false;
+  const int W = (int)fb->width;
+  const int H = (int)fb->height;
+  if (roi <= 0 || roi > W || roi > H) return false;
+
+  const int x0 = (W - roi) / 2;
+  const int y0 = (H - roi) / 2;
+  const uint16_t* src = (const uint16_t*)fb->buf;
+  for (int y = 0; y < roi; y++) {
+    const uint16_t* srow = src + (y0 + y) * W + x0;
+    uint16_t* drow = out_roi + y * roi;
+    memcpy(drow, srow, (size_t)roi * sizeof(uint16_t));
+  }
+  return true;
+}
+
+static void handle_http_snapshot() {
+  if (!g_camera_enabled) {
+    Http.send(503, "text/plain", "camera_disabled");
+    return;
+  }
+
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) {
+    Http.send(500, "text/plain", "capture_failed");
+    return;
+  }
+
+  const int roi = ROI_SIZE_PX;
+  uint16_t* roi_buf = (uint16_t*)ps_malloc((size_t)roi * (size_t)roi * sizeof(uint16_t));
+  if (!roi_buf) roi_buf = (uint16_t*)malloc((size_t)roi * (size_t)roi * sizeof(uint16_t));
+  if (!roi_buf) {
+    esp_camera_fb_return(fb);
+    Http.send(500, "text/plain", "alloc_failed");
+    return;
+  }
+
+  bool ok = extract_center_roi_rgb565(fb, roi_buf, roi);
+  esp_camera_fb_return(fb);
+  if (!ok) {
+    free(roi_buf);
+    Http.send(500, "text/plain", "roi_extract_failed");
+    return;
+  }
+
+  uint8_t* jpg_buf = nullptr;
+  size_t jpg_len = 0;
+  ok = fmt2jpg(
+    (const uint8_t*)roi_buf,
+    (size_t)roi * (size_t)roi * sizeof(uint16_t),
+    roi,
+    roi,
+    PIXFORMAT_RGB565,
+    SNAPSHOT_JPEG_QUALITY,
+    &jpg_buf,
+    &jpg_len
+  );
+  free(roi_buf);
+
+  if (!ok || !jpg_buf || jpg_len == 0) {
+    if (jpg_buf) free(jpg_buf);
+    Http.send(500, "text/plain", "jpeg_encode_failed");
+    return;
+  }
+
+  Http.sendHeader("Cache-Control", "no-store, max-age=0");
+  Http.setContentLength(jpg_len);
+  Http.send(200, "image/jpeg", "");
+  WiFiClient c = Http.client();
+  c.write(jpg_buf, jpg_len);
+  c.flush();
+  free(jpg_buf);
+}
+
+static void http_server_init() {
+  if (!ENABLE_HTTP_SERVER) return;
+  Http.on("/status", HTTP_GET, handle_http_status);
+  Http.on("/control", HTTP_POST, handle_http_control);
+  Http.on("/snapshot", HTTP_GET, handle_http_snapshot);
+  Http.onNotFound([]() { Http.send(404, "text/plain", "not_found"); });
+  Http.begin();
+  Serial.printf("[HTTP] server started on port %u (GET /status, POST /control, GET /snapshot)\n", (unsigned)HTTP_SERVER_PORT);
+}
+
+static void telemetry_maybe_send(uint32_t now_ms) {
+  if (!g_telemetry_enabled) return;
+  if (g_telemetry_hz <= 0.0f) return;
+  if ((uint32_t)g_telemetry_ip == 0) return; // not configured
+
+  uint32_t interval_ms = (uint32_t)(1000.0f / g_telemetry_hz);
+  if (interval_ms < 10) interval_ms = 10;
+  if (g_last_telemetry_ms != 0 && (now_ms - g_last_telemetry_ms) < interval_ms) return;
+  g_last_telemetry_ms = now_ms;
+
+  StaticJsonDocument<384> doc;
+  doc["device_id"] = DEVICE_ID;
+  doc["t_ms"] = now_ms;
+  doc["frame_id"] = (uint32_t)g_frame_id;
+  if (isfinite(g_prob_raw)) doc["p_raw"] = (double)g_prob_raw;
+  if (isfinite(g_prob_ema)) doc["p_ema"] = (double)g_prob_ema;
+  if (isfinite(g_z)) doc["z"] = (double)g_z;
+  doc["state"] = g_state_on ? 1 : 0;
+  doc["use_zscore"] = g_use_zscore;
+  doc["rssi"] = WiFi.RSSI();
+
+  char out[384];
+  size_t n = serializeJson(doc, out, sizeof(out));
+  Udp.beginPacket(g_telemetry_ip, g_telemetry_port);
+  Udp.write((const uint8_t*)out, n);
+  Udp.endPacket();
+}
+
 static void infer_loop_once() {
+  if (!g_camera_enabled) return;
+  if (!g_infer_enabled && !g_upload_enabled) return; // nothing to do
+
   const uint32_t now_ms = millis();
   const uint32_t frame_interval_ms = (g_target_fps > 0) ? (1000UL / g_target_fps) : 100;
 
@@ -603,8 +1011,8 @@ static void infer_loop_once() {
     return;
   }
 
-  // --- Inference ---
-  if (extract_center_roi_downsample_gray(fb, g_gray)) {
+  // --- Inference (optional) ---
+  if (g_infer_enabled && extract_center_roi_downsample_gray(fb, g_gray)) {
     lbp_hist_8(g_gray, INPUT_SIZE, g_hist);
     const int total = (INPUT_SIZE - 2) * (INPUT_SIZE - 2);
     g_prob_raw = lbp_lr_predict_prob(g_hist, total);
@@ -615,6 +1023,7 @@ static void infer_loop_once() {
     if (dt_sec <= 0.0f) dt_sec = (float)frame_interval_ms / 1000.0f;
 
     update_prob_ema(g_prob_raw, dt_sec);
+    update_zscore(g_prob_ema, dt_sec);
 
     // Calibration accumulation uses EMA (more stable)
     if (g_calib_active && isfinite(g_prob_ema)) {
@@ -623,41 +1032,52 @@ static void infer_loop_once() {
       g_calib_sum2 += (double)g_prob_ema * (double)g_prob_ema;
     }
 
-    // Hysteresis state machine
+    // Hysteresis state machine (probability or z-score)
     bool prev_state = g_state_on;
     if (!g_state_on) {
-      if (isfinite(g_prob_ema) && g_prob_ema >= g_thr_on) {
-        g_state_on = true;
+      if (g_use_zscore) {
+        if (isfinite(g_z) && g_z >= g_z_on) g_state_on = true;
+      } else {
+        if (isfinite(g_prob_ema) && g_prob_ema >= g_thr_on) g_state_on = true;
       }
     } else {
-      if (isfinite(g_prob_ema) && g_prob_ema <= g_thr_off) {
-        g_state_on = false;
+      if (g_use_zscore) {
+        if (isfinite(g_z) && g_z <= g_z_off) g_state_on = false;
+      } else {
+        if (isfinite(g_prob_ema) && g_prob_ema <= g_thr_off) g_state_on = false;
       }
     }
 
     if (prev_state != g_state_on) {
-      Serial.printf("[GB] state change: %d -> %d (p=%.3f ema=%.3f thr_on=%.3f thr_off=%.3f)\n",
+      Serial.printf("[GB] state change: %d -> %d (mode=%s p=%.3f ema=%.3f z=%.3f thr_on=%.3f thr_off=%.3f z_on=%.2f z_off=%.2f)\n",
                     prev_state ? 1 : 0, g_state_on ? 1 : 0,
+                    g_use_zscore ? "z" : "p",
                     isfinite(g_prob_raw) ? g_prob_raw : -1.0f,
                     isfinite(g_prob_ema) ? g_prob_ema : -1.0f,
-                    g_thr_on, g_thr_off);
+                    isfinite(g_z) ? g_z : -99.0f,
+                    g_thr_on, g_thr_off,
+                    g_z_on, g_z_off);
 
       if (ENABLE_EVENT_POST) {
-        char note[80];
-        snprintf(note, sizeof(note), "p=%.3f ema=%.3f", (float)g_prob_raw, (float)g_prob_ema);
+        char note[120];
+        snprintf(note, sizeof(note), "mode=%s p=%.3f ema=%.3f z=%.3f", g_use_zscore ? "z" : "p", (float)g_prob_raw, (float)g_prob_ema, (float)g_z);
         (void)http_post_event(g_state_on ? "gb_pred_on" : "gb_pred_off", 1, note);
       }
     }
 
     // Periodic print
     if (PRINT_EVERY_N_FRAMES > 0 && (g_frame_id % PRINT_EVERY_N_FRAMES) == 0) {
-      Serial.printf("[INF] frame=%lu p=%.3f ema=%.3f state=%d thr_on=%.3f thr_off=%.3f upload=%d\n",
+      Serial.printf("[INF] frame=%lu p=%.3f ema=%.3f z=%.3f state=%d mode=%s thr_on=%.3f thr_off=%.3f z_on=%.2f z_off=%.2f upload=%d\n",
                     (unsigned long)g_frame_id,
                     isfinite(g_prob_raw) ? g_prob_raw : -1.0f,
                     isfinite(g_prob_ema) ? g_prob_ema : -1.0f,
+                    isfinite(g_z) ? g_z : -99.0f,
                     g_state_on ? 1 : 0,
+                    g_use_zscore ? "z" : "p",
                     g_thr_on,
                     g_thr_off,
+                    g_z_on,
+                    g_z_off,
                     g_upload_enabled ? 1 : 0);
     }
   }
@@ -666,6 +1086,9 @@ static void infer_loop_once() {
   if (g_upload_enabled) {
     (void)http_upload_frame_with_pred(fb);
   }
+
+  // --- Optional telemetry push ---
+  telemetry_maybe_send(now_ms);
 
   esp_camera_fb_return(fb);
   g_frame_id++;
@@ -705,7 +1128,14 @@ void setup() {
     delay(2000);
   }
 
+  // Default telemetry target (can be changed via /control)
+  IPAddress tele_ip;
+  if (tele_ip.fromString(TELEMETRY_HOST_DEFAULT)) {
+    g_telemetry_ip = tele_ip;
+  }
+
   udp_init();
+  http_server_init();
 
   if (!CAM_INIT_BEFORE_WIFI) {
     const bool cam_ok = camera_init_with_retry();
@@ -736,6 +1166,10 @@ void setup() {
 
 void loop() {
   handle_udp_cmd();
+
+  if (ENABLE_HTTP_SERVER) {
+    Http.handleClient();
+  }
 
   infer_loop_once();
 
