@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Goosebumps Hub</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <header>
+    <h1>Goosebumps Hub</h1>
+    <div class="sub">Atom S3R CAM: status / control / snapshot + OSC (event only)</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Run (Logging)</h2>
+      <div class="row">
+        <label>Session ID</label>
+        <input id="session_id" placeholder="e.g. subject010_session01"/>
+        <button id="btn_run_start">Start Run</button>
+        <button id="btn_run_stop" class="danger">Stop Run</button>
+        <span id="run_status" class="badge">inactive</span>
+      </div>
+      <div class="hint">While running, logs are saved to out/&lt;session_id&gt;/infer.csv and pred_events.csv.</div>
+    </section>
+
+    <section class="card">
+      <h2>Devices</h2>
+      <div class="row">
+        <input id="dev_id" placeholder="device_id (e.g. atoms3r_01)"/>
+        <input id="dev_host" placeholder="host (e.g. 192.168.137.205)"/>
+        <input id="dev_port" placeholder="port (default 80)"/>
+        <button id="btn_add_dev">Add Device</button>
+        <label class="small">poll_hz</label>
+        <input id="poll_hz" value="5" style="width:70px"/>
+        <button id="btn_set_poll">Set</button>
+      </div>
+
+      <div id="devices"></div>
+      <div class="hint">Snapshots are fetched on demand (no continuous stream).</div>
+    </section>
+
+    <section class="card">
+      <h2>OSC (event only)</h2>
+      <div class="row">
+        <label><input type="checkbox" id="osc_enabled"/> Enable</label>
+      </div>
+
+      <div class="row">
+        <input id="osc_host" placeholder="target host (e.g. 127.0.0.1)"/>
+        <input id="osc_port" placeholder="target port (e.g. 9000)"/>
+        <button id="btn_add_osc">Add Target</button>
+      </div>
+
+      <div id="osc_targets"></div>
+      <div class="hint">
+        Sends: <code>/goose/event</code> ("on"/"off"), <code>/goose/event_on</code>, <code>/goose/event_off</code><br/>
+        Intended for Unity (extOSC) or similar receivers.
+      </div>
+      <button id="btn_save_osc">Save OSC Config</button>
+    </section>
+
+    <section class="card">
+      <h2>Snapshot Viewer</h2>
+      <div class="row">
+        <label>device_id</label>
+        <input id="snap_device_id" placeholder="atoms3r_01"/>
+        <button id="btn_snapshot">Fetch Snapshot</button>
+      </div>
+      <div class="snapbox">
+        <img id="snapshot_img" alt="snapshot" />
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <small>Goosebumps Hub v0.1.0</small>
+  </footer>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>
