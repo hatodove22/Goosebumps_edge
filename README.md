@@ -101,7 +101,10 @@ Open UI:
 - `http://localhost:8000/`
 
 ## License
-TBD (add a LICENSE before open-sourcing).
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+## Citation
+If you use any hardware designs, firmware, software, datasets, or other resources from this repository in your research or projects, please cite the following paper.
 
 ## DOI
 https://doi.org/10.1145/3795011.3797377
