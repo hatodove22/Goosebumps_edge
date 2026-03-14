@@ -102,3 +102,20 @@ Open UI:
 
 ## License
 TBD (add a LICENSE before open-sourcing).
+
+## DOI
+https://doi.org/10.1145/3795011.3797377
+
+## BibTeX
+```bibtex
+@inproceedings{ota2026goosebumpsedge,
+  title     = {GoosebumpsEdge: Wearable On-Device Skin Imaging for Piloerection Detection},
+  author    = {Ota, Hiroki and Marquardt, Alexander and El Ali, Abdallah and Dollack, Felix and Kiyokawa, Kiyoshi and Riecke, Bernhard E. and Perusqu{\'{i}}a-Hern{\'{a}}ndez, Monica},
+  booktitle = {AHs 2026: The Augmented Humans International Conference 2026},
+  address   = {Okinawa, Japan},
+  month     = mar,
+  year      = {2026},
+  doi       = {10.1145/3795011.3797377},
+  url       = {https://doi.org/10.1145/3795011.3797377}
+}
+```
