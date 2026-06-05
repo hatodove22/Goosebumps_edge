@@ -2,6 +2,25 @@
 
 Updated: 2026-01-16
 
+## Addendum: v2.0 XIAO ESP32S3 Sense (OV3660)
+
+The v2.0 hardware target is **Seeed Studio XIAO ESP32S3 Sense with OV3660**. It is kept separate from the v1.x AtomS3R firmware because the board, camera slot pin map, and IMU assumptions differ.
+
+Reference firmware:
+- Location: `firmware/xiao_esp32s3_sense_streamer_v2/`
+- PlatformIO env: `xiao_esp32s3_sense_v2`
+- Firmware metadata: `firmware_version=2.0.0`, `hardware_version=v2.0-xiao-esp32s3-sense-ov3660`
+- Collector API compatibility: same `POST /upload` and UDP JSON commands as the v1.x streamer
+- IMU: not present in the standard XIAO ESP32S3 Sense setup; firmware replies with `imu_ok=false` and omits IMU form fields
+
+XIAO camera pin map:
+- XCLK GPIO10
+- SCCB SDA GPIO40, SCL GPIO39
+- PCLK GPIO13, VSYNC GPIO38, HREF GPIO47
+- D0..D7 GPIO15, GPIO17, GPIO18, GPIO16, GPIO14, GPIO12, GPIO11, GPIO48
+
+---
+
 ## Addendum: AtomS3R-CAM (GC0308) camera power pin handling
 
 AtomS3R-CAM uses **POWER_N on GPIO18** for the camera module. M5Stack documentation states that **GPIO18 must be set LOW before camera initialization to enable power**.
@@ -51,6 +70,9 @@ If you delegate implementation, align behavior to this reference first.
 - AtomS3R-M12 firmware (PlatformIO): `firmware/atoms3r_m12_streamer/`
   - Config: `firmware/atoms3r_m12_streamer/include/user_config.h`
   - Pin definition: `firmware/atoms3r_m12_streamer/include/board_atoms3r_m12_pins.h`
+- v2.0 XIAO ESP32S3 Sense firmware (PlatformIO): `firmware/xiao_esp32s3_sense_streamer_v2/`
+  - Config: `firmware/xiao_esp32s3_sense_streamer_v2/include/user_config.h`
+  - Pin definition: `firmware/xiao_esp32s3_sense_streamer_v2/include/board_xiao_esp32s3_sense_pins.h`
 - Ops tools: `tools/`
   - `simulate_device.py` (test /upload without device)
   - `validate_session.py` (session consistency check)

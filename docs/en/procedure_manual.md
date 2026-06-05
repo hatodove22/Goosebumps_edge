@@ -134,6 +134,33 @@ Check Serial for:
 
 ---
 
+## 3B. XIAO ESP32S3 Sense v2.0 (PlatformIO) Setup
+
+Use this path for the v2.0 hardware change: Seeed Studio XIAO ESP32S3 Sense with OV3660.
+
+### 3B.1 Edit config
+Edit `firmware/xiao_esp32s3_sense_streamer_v2/include/user_config.h`.
+- Wi-Fi SSID/PASS
+- Collector host IP (PC IP)
+- LED PWM pin for the external illumination rig
+
+### 3B.2 Flash
+```bash
+cd firmware/xiao_esp32s3_sense_streamer_v2
+pio run -t upload
+pio device monitor
+```
+
+Serial should show:
+- `firmware=2.0.0`
+- Wi-Fi connect success and IP
+- PSRAM detected
+- Camera init OK
+
+Note: XIAO ESP32S3 Sense does not include the AtomS3R BMI270 IMU, so the Collector UI IMU field may show `-`/NaN. That is expected for this v2.0 firmware unless an external IMU is added later.
+
+---
+
 ## 4. Pre-Experiment Setup (Every Session)
 
 ### 4.1 Physical Mounting
@@ -207,6 +234,8 @@ Goal: **Decide if goosebumps features are separable before heavy labeling/traini
 ---
 
 ## 8. IMU Check (v1.2)
+
+Skip this section for the standard XIAO ESP32S3 Sense v2.0 firmware. It reports `imu_ok=false` because the v2.0 XIAO hardware target does not include the AtomS3R BMI270 IMU.
 
 ### 8.1 UI Check
 - IMU field shows numeric `g_norm` (not `-` or NaN)

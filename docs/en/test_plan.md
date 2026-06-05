@@ -2,11 +2,12 @@
 
 Updated: 2026-01-16
 
-This document organizes the **hardware test items** for the goosebumps detection project using AtomS3R-M12 (OV3660 + BMI270) and the Collector PC (FastAPI UI), so the operator can verify everything without missing steps.
+This document organizes the **hardware test items** for the goosebumps detection project using AtomS3R-M12 (OV3660 + BMI270), XIAO ESP32S3 Sense v2.0 (OV3660), and the Collector PC (FastAPI UI), so the operator can verify everything without missing steps.
 
 ## 1. Preconditions
 - The Collector PC is running and the UI is accessible.
 - The Atom device can join the same LAN (Wi-Fi).
+- For v2.0, the XIAO ESP32S3 Sense firmware is built from `firmware/xiao_esp32s3_sense_streamer_v2/`.
 - External LED can be PWM controlled (with current limiting and heat dissipation as needed).
 
 ## 2. Connection and Basic Behavior (Highest Priority)
@@ -36,6 +37,7 @@ This document organizes the **hardware test items** for the goosebumps detection
 - [ ] Banding does not become severe (if it does, revisit PWM frequency and exposure).
 
 ## 5. IMU (BMI270)
+- For XIAO ESP32S3 Sense v2.0, mark this section N/A unless an external IMU is added.
 - [ ] UI shows `g_norm` and `gx/gy/gz`, `ax/ay/az`.
 - [ ] g_norm increases when the arm moves.
 - [ ] motion_flag rises appropriately (thresholds configurable).

@@ -17,10 +17,12 @@ This repository includes:
 - **Firmware**
   - `firmware/atoms3r_m12_streamer`: streaming JPEG uploader with UDP JSON control (optional BMI270 IMU)
   - `firmware/atoms3r_cam_realtime_infer`: on-device inference (LBP + Logistic Regression) with optional upload/event posts
+  - `firmware/xiao_esp32s3_sense_streamer_v2`: v2.0 XIAO ESP32S3 Sense (OV3660) JPEG uploader with UDP JSON control
 
 ## Supported hardware
 - AtomS3R-M12 (OV3660, M12)
 - AtomS3R-CAM (GC0308, non-M12)
+- XIAO ESP32S3 Sense v2.0 (OV3660)
 
 ## Repository layout
 - `collector/`: Collector PC server + UI
